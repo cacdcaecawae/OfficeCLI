@@ -1,0 +1,69 @@
+name: PaperAI CI
+
+on:
+  push:
+    branches:
+      - 'fix/paperai-office-compatible-validation'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --nologo
+
+  windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish and smoke test
+        env:
+          MSYS_NO_PATHCONV: '1'
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          dotnet publish src/officecli/officecli.csproj -c Release -r win-x64 -o publish --nologo
+          test "$(publish/officecli.exe --version | tr -d '\r')" = '1.0.146-paperai.1'
+          publish/officecli.exe create smoke.docx
+          publish/officecli.exe add smoke.docx /body --type paragraph --prop text="PaperAI smoke"
+          publish/officecli.exe validate smoke.docx --profile strict --json
+          publish/officecli.exe close smoke.docx
+
+  npm-tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Test and pack
+        working-directory: npm
+        run: |
+          npm test
+          npm pack --dry-run
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tar -tzf "$RUNNER_TEMP"/*.tgz | grep -q 'package/officecli.js'
+          tar -tzf "$RUNNER_TEMP"/*.tgz | grep -q 'package/lib/install-binary.js'

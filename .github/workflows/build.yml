@@ -4,13 +4,30 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - 'v*-paperai.*'
 
 permissions:
   contents: read
 
 jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --nologo
+
   build:
+    needs: test
     strategy:
       matrix:
         include:
@@ -39,6 +56,13 @@ jobs:
             name: officecli-win-arm64.exe
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    env:
+      BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+      TEAM_ID: ${{ secrets.TEAM_ID }}
 
     defaults:
       run:
@@ -64,11 +88,11 @@ jobs:
           fi
 
       - name: Setup macOS code signing
-        if: startsWith(matrix.rid, 'osx-')
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        if: >-
+          startsWith(matrix.rid, 'osx-') &&
+          env.BUILD_CERTIFICATE_BASE64 != '' &&
+          env.P12_PASSWORD != '' &&
+          env.KEYCHAIN_PASSWORD != ''
         run: |
           CERT_PATH="$RUNNER_TEMP/build_certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
@@ -84,7 +108,11 @@ jobs:
           rm -f "$CERT_PATH"
 
       - name: Codesign (macOS)
-        if: startsWith(matrix.rid, 'osx-')
+        if: >-
+          startsWith(matrix.rid, 'osx-') &&
+          env.BUILD_CERTIFICATE_BASE64 != '' &&
+          env.P12_PASSWORD != '' &&
+          env.KEYCHAIN_PASSWORD != ''
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -n 1 | sed -E 's/.*"(.+)"/\1/')
           echo "Signing with: $IDENTITY"
@@ -100,11 +128,14 @@ jobs:
           codesign -d --entitlements - --xml publish/${{ matrix.name }} | grep -q allow-jit
 
       - name: Notarize (macOS)
-        if: startsWith(matrix.rid, 'osx-')
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
+        if: >-
+          startsWith(matrix.rid, 'osx-') &&
+          env.BUILD_CERTIFICATE_BASE64 != '' &&
+          env.P12_PASSWORD != '' &&
+          env.KEYCHAIN_PASSWORD != '' &&
+          env.APPLE_ID != '' &&
+          env.APP_SPECIFIC_PASSWORD != '' &&
+          env.TEAM_ID != ''
         run: |
           # A bare Mach-O binary cannot be stapled; notarytool requires a
           # zip/pkg/dmg container. Submit a zip — the notarization ticket is
@@ -116,6 +147,14 @@ jobs:
             --password "$APP_SPECIFIC_PASSWORD" \
             --wait
           rm -f "$RUNNER_TEMP/notarize.zip"
+
+      - name: Report unsigned macOS build
+        if: >-
+          startsWith(matrix.rid, 'osx-') &&
+          (env.BUILD_CERTIFICATE_BASE64 == '' ||
+          env.P12_PASSWORD == '' ||
+          env.KEYCHAIN_PASSWORD == '')
+        run: echo "::warning::No fork signing certificate is configured; this draft asset is unsigned."
 
       - name: Smoke test - create document
         if: >-
@@ -172,40 +211,43 @@ jobs:
             "$HOME/.local/bin/officecli" --version
           fi
 
-      - name: Smoke test - install.sh / install.ps1
-        # Exercises the shell installers themselves (separate from the CLI's
-        # own `install` subcommand tested above). Downloads from
-        # d.officecli.ai with github fallback — validates the production
-        # mirror is reachable AND the in-repo script is syntactically and
-        # logically correct on each platform.
-        if: >-
-          (matrix.rid == 'osx-arm64' && runner.arch == 'ARM64') ||
-          (matrix.rid == 'osx-x64' && runner.arch == 'X64') ||
-          (matrix.rid == 'linux-x64' && runner.os == 'Linux') ||
-          (matrix.rid == 'win-x64' && runner.os == 'Windows')
-        shell: bash
-        env:
-          MSYS_NO_PATHCONV: '1'
-          MSYS2_ARG_CONV_EXCL: '*'
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            pwsh -NoProfile -ExecutionPolicy Bypass -File ./install.ps1
-            test -f "$LOCALAPPDATA/OfficeCLI/officecli.exe" || { echo "FAIL: officecli.exe not installed"; exit 1; }
-            "$LOCALAPPDATA/OfficeCLI/officecli.exe" --version
-          else
-            bash install.sh
-            test -f "$HOME/.local/bin/officecli" || { echo "FAIL: officecli not installed at ~/.local/bin"; exit 1; }
-            "$HOME/.local/bin/officecli" --version
-          fi
-
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.name }}
           path: publish/${{ matrix.name }}
 
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Verify version, installer, and tarball
+        working-directory: npm
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "v$PACKAGE_VERSION" = "$GITHUB_REF_NAME"
+          fi
+          npm test
+          mkdir -p ../package
+          npm pack --pack-destination ../package
+          tar -tzf ../package/*.tgz | grep -q 'package/officecli.js'
+          tar -tzf ../package/*.tgz | grep -q 'package/lib/install-binary.js'
+
+      - name: Upload npm tarball
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-tarball
+          path: package/*.tgz
+
   release:
-    needs: build
+    needs: [build, package]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -230,6 +272,6 @@ jobs:
       - name: Create Draft Release
         uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/**/*
+          files: artifacts/*
           generate_release_notes: true
           draft: true

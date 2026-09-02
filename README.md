@@ -1,5 +1,10 @@
 # OfficeCLI
 
+> **PaperAI fork notice:** `1.0.146-paperai.1` is based on upstream
+> [`v1.0.146`](https://github.com/iOfficeAI/OfficeCLI/releases/tag/v1.0.146) and
+> adds Office-compatible DOCX validation plus fork-pinned GitHub Release/npm
+> delivery. It is not an official upstream release.
+
 > **OfficeCLI is the world's first and the best Office suite designed for AI agents.**
 
 **Give any AI agent full control over Word, Excel, and PowerPoint — in one line of code.**
@@ -8,7 +13,7 @@ Open-source. Single binary. No Office installation. No dependencies. Works every
 
 **OfficeCLI's built-in HTML rendering engine reproduces documents with high fidelity — and that's what gives AI eyes.** It renders `.docx` / `.xlsx` / `.pptx` to HTML or PNG, closing the *render → look → fix* loop.
 
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![PaperAI Fork Release](https://img.shields.io/github/v/release/cacdcaecawae/OfficeCLI?label=PaperAI%20fork)](https://github.com/cacdcaecawae/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md)

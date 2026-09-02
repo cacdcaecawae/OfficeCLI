@@ -1,5 +1,10 @@
 # OfficeCLI
 
+> **PaperAI fork 说明：**`1.0.146-paperai.1` 基于上游
+> [`v1.0.146`](https://github.com/iOfficeAI/OfficeCLI/releases/tag/v1.0.146)，
+> 增加 Office 兼容 DOCX 校验以及锁定 fork GitHub Release 的 npm 下载链路；
+> 它不是上游官方发行版。
+
 > **OfficeCLI 是全球首个、也是最好的专为 AI 智能体设计的 Office 套件。**
 
 **让任何 AI 智能体完全掌控 Word、Excel 和 PowerPoint——只需一行代码。**
@@ -8,7 +13,7 @@
 
 **OfficeCLI 的内置 HTML 渲染引擎，高度还原文档原貌 —— 这正是让 AI 拥有"眼睛"的关键。** 它把 `.docx` / `.xlsx` / `.pptx` 渲染为 HTML 或 PNG，闭合"渲染 → 看 → 改"的循环。
 
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![PaperAI Fork Release](https://img.shields.io/github/v/release/cacdcaecawae/OfficeCLI?label=PaperAI%20fork)](https://github.com/cacdcaecawae/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 [English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md)
