@@ -533,6 +533,24 @@ officecli get report.docx /body --depth 1 --json
 | `config` | 获取或设置配置 |
 | `help <format> <command>` | [内置帮助](https://github.com/iOfficeAI/OfficeCLI/wiki/command-reference)（如 `officecli help pptx set shape`） |
 
+### 校验模式
+
+`validate` 是只读操作，默认保持上游的严格判定：
+
+```bash
+officecli validate report.docx --profile strict --json
+officecli validate report.docx --profile office-compatible --json
+```
+
+`strict` 将 Open XML SDK 报告的所有模式诊断视为错误。`office-compatible` 只把四种已经验证的 Word/WPS 相邻元素顺序变体降级为 warning：`/word/document.xml` 中紧跟 `m:sty` 的 `m:scr`、紧跟 `m:grow` 的 `m:limLoc`、紧跟 `m:mcs` 的 `m:plcHide`，以及 `/word/styles.xml` 中紧跟 `w:qFormat` 的 `w:uiPriority`。部件、命名空间、父元素、子元素和紧邻前序元素必须全部匹配。XML 损坏、关系或资源缺失、非法公式结构及其他所有 unexpected child 在两种模式下仍是错误。
+
+JSON 会在 `data.diagnostics` 中保留全部诊断；`data.errors` 和 `data.warnings` 是按严重级别划分的同一批诊断。每条诊断包含 `type`、`description`、可选的 `path`/`part`、`severity`、`classification` 和 `reason`。`data.profile`、`errorCount`、`warningCount` 给出本次判定，`count` 继续作为 `errorCount` 的别名。仅当 `errorCount` 为 0 时，顶层 `success` 才为 true。
+
+| 结果 | 退出码 |
+|------|--------|
+| 无错误（包括 `office-compatible` 下仅有兼容性 warning） | `0` |
+| 存在阻断诊断、输入损坏或 profile 参数非法 | `1` |
+
 ## 端到端工作流示例
 
 典型的智能体自愈式工作流：创建演示文稿、填充内容、验证并修复问题 -- 全程无需人工干预。

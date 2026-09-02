@@ -539,6 +539,24 @@ See `officecli --help` for full details on exit codes and error formats.
 | `config` | Get or set configuration |
 | `help <format> <command>` | [Built-in help](https://github.com/iOfficeAI/OfficeCLI/wiki/command-reference) (e.g. `officecli help pptx set shape`) |
 
+### Validation profiles
+
+`validate` is read-only and defaults to the upstream-compatible strict verdict:
+
+```bash
+officecli validate report.docx --profile strict --json
+officecli validate report.docx --profile office-compatible --json
+```
+
+`strict` treats every reported Open XML SDK schema diagnostic as an error. `office-compatible` changes only four proven Word/WPS sibling-order variants into warnings: `m:scr` immediately after `m:sty`, `m:limLoc` immediately after `m:grow`, `m:plcHide` immediately after `m:mcs` in `/word/document.xml`, and `w:uiPriority` immediately after `w:qFormat` in `/word/styles.xml`. The part, namespace, parent, child, and immediate predecessor must all match. Malformed XML, missing relationships/resources, illegal formula structure, and every other unexpected child remain errors.
+
+JSON output keeps every diagnostic under `data.diagnostics`. `data.errors` and `data.warnings` are severity-specific views of the same entries; each entry has `type`, `description`, optional `path`/`part`, `severity`, `classification`, and `reason`. `data.profile`, `errorCount`, and `warningCount` state the applied verdict; `count` remains an alias for `errorCount`. The top-level `success` is true exactly when `errorCount` is zero.
+
+| Result | Exit code |
+|--------|-----------|
+| No errors (including compatibility warnings under `office-compatible`) | `0` |
+| One or more blocking diagnostics, malformed input, or an invalid profile | `1` |
+
 ## End-to-End Workflow Example
 
 A typical self-healing agent workflow: create a presentation, populate it, verify, and fix issues -- all without human intervention.

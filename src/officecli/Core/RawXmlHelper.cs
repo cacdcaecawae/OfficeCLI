@@ -676,11 +676,7 @@ internal static class RawXmlHelper
             if (e == null) continue;
             try
             {
-                errors.Add(new ValidationError(
-                    e.ErrorType.ToString(),
-                    e.Description,
-                    e.Path?.XPath,
-                    e.Part?.Uri.ToString()));
+                errors.Add(CreateValidationError(e));
             }
             catch (Exception ex)
             {
@@ -700,6 +696,119 @@ internal static class RawXmlHelper
         // see IsBenignFontChildOrderError.
         errors.RemoveAll(IsBenignFontChildOrderError);
         return errors;
+    }
+
+    private const string OfficeMathNamespace =
+        "http://schemas.openxmlformats.org/officeDocument/2006/math";
+    private const string WordprocessingNamespace =
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /// <summary>
+    /// Preserve the strict SDK error while attaching compatibility metadata
+    /// only when the validator identifies one exact, observed sibling-order
+    /// pattern. The profile layer decides whether that metadata changes the
+    /// diagnostic from an error to a warning.
+    /// </summary>
+    private static ValidationError CreateValidationError(
+        DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
+    {
+        return new ValidationError(
+            error.ErrorType.ToString(),
+            error.Description,
+            error.Path?.XPath,
+            error.Part?.Uri.ToString())
+        {
+            OfficeCompatibilityReason = GetOfficeCompatibilityReason(error),
+        };
+    }
+
+    /// <summary>
+    /// Recognize four element-order variants emitted by Word/WPS documents.
+    /// Namespace, part, parent, offending child, and immediate predecessor must
+    /// all match; unrelated "unexpected child" diagnostics remain blocking.
+    /// </summary>
+    private static string? GetOfficeCompatibilityReason(
+        DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
+    {
+        if (error.ErrorType != ValidationErrorType.Schema
+            || error.Node == null
+            || error.RelatedNode == null
+            || error.Part == null)
+            return null;
+
+        var parent = error.Node;
+        var child = error.RelatedNode;
+        var expectedDescription =
+            $"The element has unexpected child element '{child.NamespaceUri}:{child.LocalName}'.";
+        if (!string.Equals(error.Description, expectedDescription, StringComparison.Ordinal))
+            return null;
+
+        OpenXmlElement? previous = null;
+        var foundChild = false;
+        foreach (var sibling in parent.ChildElements)
+        {
+            if (ReferenceEquals(sibling, child))
+            {
+                foundChild = true;
+                break;
+            }
+            previous = sibling;
+        }
+        if (!foundChild || previous == null) return null;
+
+        var part = error.Part.Uri.ToString();
+        if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "rPr", OfficeMathNamespace,
+                previous, "sty", OfficeMathNamespace,
+                child, "scr", OfficeMathNamespace))
+        {
+            return "Word/WPS preserves m:scr immediately after m:sty in m:rPr; Open XML SDK 3.4.1 enforces the strict sequence with m:scr before m:sty.";
+        }
+        if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "naryPr", OfficeMathNamespace,
+                previous, "grow", OfficeMathNamespace,
+                child, "limLoc", OfficeMathNamespace))
+        {
+            return "Word/WPS preserves m:limLoc immediately after m:grow in m:naryPr; Open XML SDK 3.4.1 enforces the strict sequence with m:limLoc before m:grow.";
+        }
+        if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "mPr", OfficeMathNamespace,
+                previous, "mcs", OfficeMathNamespace,
+                child, "plcHide", OfficeMathNamespace))
+        {
+            return "Word/WPS preserves m:plcHide immediately after m:mcs in m:mPr; Open XML SDK 3.4.1 enforces the strict sequence with m:plcHide before m:mcs.";
+        }
+        if (part == "/word/styles.xml"
+            && IsSiblingOrder(
+                parent, "style", WordprocessingNamespace,
+                previous, "qFormat", WordprocessingNamespace,
+                child, "uiPriority", WordprocessingNamespace))
+        {
+            return "Word/WPS preserves w:uiPriority immediately after w:qFormat in w:style; Open XML SDK 3.4.1 enforces the strict sequence with w:uiPriority before w:qFormat.";
+        }
+        return null;
+    }
+
+    private static bool IsSiblingOrder(
+        OpenXmlElement parent,
+        string parentName,
+        string parentNamespace,
+        OpenXmlElement previous,
+        string previousName,
+        string previousNamespace,
+        OpenXmlElement child,
+        string childName,
+        string childNamespace)
+    {
+        return parent.LocalName == parentName
+            && parent.NamespaceUri == parentNamespace
+            && previous.LocalName == previousName
+            && previous.NamespaceUri == previousNamespace
+            && child.LocalName == childName
+            && child.NamespaceUri == childNamespace;
     }
 
     /// <summary>
