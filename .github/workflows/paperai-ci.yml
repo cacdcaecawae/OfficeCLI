@@ -50,6 +50,12 @@ jobs:
           publish/officecli.exe validate smoke.docx --profile strict --json
           publish/officecli.exe close smoke.docx
 
+      - name: Validate adversarial fixtures with the native executable
+        shell: pwsh
+        env:
+          OFFICECLI_TEST_BINARY: ${{ github.workspace }}\publish\officecli.exe
+        run: dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --nologo
+
   npm-tarball:
     runs-on: ubuntu-latest
     steps:

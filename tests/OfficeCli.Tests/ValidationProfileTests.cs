@@ -9,11 +9,14 @@ namespace OfficeCli.Tests;
 
 public sealed class ValidationProfileTests
 {
-    [Fact]
-    public async Task CompatibilityFixtureHasLayeredVerdictsAndVisibleDiagnostics()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompatibilityFixtureHasLayeredVerdictsAndVisibleDiagnostics(bool styleVisibilityFlags)
     {
         using var workspace = new TestWorkspace();
-        var fixture = DocxFixtureFactory.CreateCompatibilityFixture(workspace.DirectoryPath);
+        var fixture = DocxFixtureFactory.CreateCompatibilityFixture(workspace.DirectoryPath, styleVisibilityFlags);
+        var original = await File.ReadAllBytesAsync(fixture);
 
         var defaultStrict = await CliTestDriver.RunAsync(
             workspace.DirectoryPath,
@@ -78,6 +81,45 @@ public sealed class ValidationProfileTests
         Assert.Contains(reasons, reason => reason.Contains("m:limLoc", StringComparison.Ordinal));
         Assert.Contains(reasons, reason => reason.Contains("m:plcHide", StringComparison.Ordinal));
         Assert.Contains(reasons, reason => reason.Contains("w:uiPriority", StringComparison.Ordinal));
+        Assert.Equal(original, await File.ReadAllBytesAsync(fixture));
+    }
+
+    [Theory]
+    [InlineData("scr", "duplicate-before")]
+    [InlineData("scr", "duplicate-after")]
+    [InlineData("limLoc", "duplicate-before")]
+    [InlineData("limLoc", "duplicate-after")]
+    [InlineData("plcHide", "duplicate-before")]
+    [InlineData("plcHide", "duplicate-after")]
+    [InlineData("uiPriority", "duplicate-before")]
+    [InlineData("uiPriority", "duplicate-after")]
+    [InlineData("scr", "illegal-child")]
+    public async Task KnownOrderCannotHideOtherErrorsInTheSameParent(string propertyName, string corruption)
+    {
+        using var workspace = new TestWorkspace();
+        var fixture = DocxFixtureFactory.CreateInvalidCompatibilityFixture(
+            workspace.DirectoryPath, propertyName, corruption);
+        var original = await File.ReadAllBytesAsync(fixture);
+
+        foreach (var profile in new[] { "strict", "office-compatible" })
+        {
+            var result = await CliTestDriver.RunAsync(
+                workspace.DirectoryPath,
+                "validate", fixture, "--profile", profile, "--json");
+            Assert.Equal(1, result.ExitCode);
+            using var json = JsonDocument.Parse(result.StdOut);
+            Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+            var data = json.RootElement.GetProperty("data");
+            Assert.True(data.GetProperty("errorCount").GetInt32() >= 1);
+            Assert.Equal(profile == "strict" ? 0 : 3, data.GetProperty("warningCount").GetInt32());
+            if (profile == "office-compatible")
+            {
+                Assert.Contains(data.GetProperty("diagnostics").EnumerateArray(), diagnostic =>
+                    diagnostic.GetProperty("severity").GetString() == "error"
+                    && diagnostic.GetProperty("classification").GetString() == "schema-validation-error");
+            }
+            Assert.Equal(original, await File.ReadAllBytesAsync(fixture));
+        }
     }
 
     [Fact]

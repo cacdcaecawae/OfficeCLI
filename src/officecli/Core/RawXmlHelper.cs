@@ -706,8 +706,8 @@ internal static class RawXmlHelper
     /// <summary>
     /// Preserve the strict SDK error while attaching compatibility metadata
     /// only when the validator identifies one exact, observed sibling-order
-    /// pattern. The profile layer decides whether that metadata changes the
-    /// diagnostic from an error to a warning.
+    /// pattern and the reordered parent validates in isolation. The profile
+    /// layer decides whether that metadata changes an error to a warning.
     /// </summary>
     private static ValidationError CreateValidationError(
         DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
@@ -725,7 +725,8 @@ internal static class RawXmlHelper
     /// <summary>
     /// Recognize four element-order variants emitted by Word/WPS documents.
     /// Namespace, part, parent, offending child, and immediate predecessor must
-    /// all match; unrelated "unexpected child" diagnostics remain blocking.
+    /// all match, and a deep copy of the parent must validate after only the
+    /// known child is moved. Hidden duplicate/illegal children remain blocking.
     /// </summary>
     private static string? GetOfficeCompatibilityReason(
         DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
@@ -745,6 +746,7 @@ internal static class RawXmlHelper
 
         OpenXmlElement? previous = null;
         var foundChild = false;
+        var childIndex = 0;
         foreach (var sibling in parent.ChildElements)
         {
             if (ReferenceEquals(sibling, child))
@@ -753,43 +755,73 @@ internal static class RawXmlHelper
                 break;
             }
             previous = sibling;
+            childIndex++;
         }
         if (!foundChild || previous == null) return null;
 
         var part = error.Part.Uri.ToString();
+        string? reason = null;
         if (part == "/word/document.xml"
             && IsSiblingOrder(
                 parent, "rPr", OfficeMathNamespace,
                 previous, "sty", OfficeMathNamespace,
                 child, "scr", OfficeMathNamespace))
         {
-            return "Word/WPS preserves m:scr immediately after m:sty in m:rPr; Open XML SDK 3.4.1 enforces the strict sequence with m:scr before m:sty.";
+            reason = "Word/WPS preserves m:scr immediately after m:sty in m:rPr; Open XML SDK 3.4.1 enforces the strict sequence with m:scr before m:sty.";
         }
-        if (part == "/word/document.xml"
+        else if (part == "/word/document.xml"
             && IsSiblingOrder(
                 parent, "naryPr", OfficeMathNamespace,
                 previous, "grow", OfficeMathNamespace,
                 child, "limLoc", OfficeMathNamespace))
         {
-            return "Word/WPS preserves m:limLoc immediately after m:grow in m:naryPr; Open XML SDK 3.4.1 enforces the strict sequence with m:limLoc before m:grow.";
+            reason = "Word/WPS preserves m:limLoc immediately after m:grow in m:naryPr; Open XML SDK 3.4.1 enforces the strict sequence with m:limLoc before m:grow.";
         }
-        if (part == "/word/document.xml"
+        else if (part == "/word/document.xml"
             && IsSiblingOrder(
                 parent, "mPr", OfficeMathNamespace,
                 previous, "mcs", OfficeMathNamespace,
                 child, "plcHide", OfficeMathNamespace))
         {
-            return "Word/WPS preserves m:plcHide immediately after m:mcs in m:mPr; Open XML SDK 3.4.1 enforces the strict sequence with m:plcHide before m:mcs.";
+            reason = "Word/WPS preserves m:plcHide immediately after m:mcs in m:mPr; Open XML SDK 3.4.1 enforces the strict sequence with m:plcHide before m:mcs.";
         }
-        if (part == "/word/styles.xml"
+        else if (part == "/word/styles.xml"
             && IsSiblingOrder(
                 parent, "style", WordprocessingNamespace,
                 previous, "qFormat", WordprocessingNamespace,
                 child, "uiPriority", WordprocessingNamespace))
         {
-            return "Word/WPS preserves w:uiPriority immediately after w:qFormat in w:style; Open XML SDK 3.4.1 enforces the strict sequence with w:uiPriority before w:qFormat.";
+            reason = "Word/WPS preserves w:uiPriority immediately after w:qFormat in w:style; Open XML SDK 3.4.1 requires w:uiPriority before w:semiHidden, w:unhideWhenUsed, and w:qFormat.";
         }
-        return null;
+        return reason != null && IsValidAfterKnownReorder(parent, childIndex) ? reason : null;
+    }
+
+    private static bool IsValidAfterKnownReorder(OpenXmlElement parent, int childIndex)
+    {
+        var copy = parent.CloneNode(true);
+        var child = copy.ChildElements[childIndex];
+        var previous = copy.ChildElements[childIndex - 1];
+        if (child.NamespaceUri == WordprocessingNamespace && child.LocalName == "uiPriority")
+        {
+            // Visibility flags can precede qFormat, but uiPriority must precede
+            // all three. Move only uiPriority; retain every other node/value.
+            previous = copy.ChildElements.First(sibling =>
+                sibling.NamespaceUri == WordprocessingNamespace
+                && sibling.LocalName is "semiHidden" or "unhideWhenUsed" or "qFormat");
+        }
+        child.Remove();
+        copy.InsertBefore(child, previous);
+        try
+        {
+            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365);
+            return !validator.Validate(copy).Any();
+        }
+        catch (Exception)
+        {
+            // A validator failure is not evidence of compatibility. Keep the
+            // original strict diagnostic; never modify the package being read.
+            return false;
+        }
     }
 
     private static bool IsSiblingOrder(

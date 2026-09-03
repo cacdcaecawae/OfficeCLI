@@ -13,17 +13,18 @@ internal static class CliTestDriver
     public static async Task<CliResult> RunAsync(string workingDirectory, params string[] arguments)
     {
         var dotnet = Environment.GetEnvironmentVariable("OFFICECLI_TEST_DOTNET") ?? "dotnet";
+        var binary = Environment.GetEnvironmentVariable("OFFICECLI_TEST_BINARY");
         var cliAssembly = typeof(ValidationProfiles).Assembly.Location;
         var startInfo = new ProcessStartInfo
         {
-            FileName = dotnet,
+            FileName = string.IsNullOrEmpty(binary) ? dotnet : binary,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        startInfo.ArgumentList.Add(cliAssembly);
+        if (string.IsNullOrEmpty(binary)) startInfo.ArgumentList.Add(cliAssembly);
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         startInfo.Environment["OFFICECLI_NO_AUTO_RESIDENT"] = "1";
 

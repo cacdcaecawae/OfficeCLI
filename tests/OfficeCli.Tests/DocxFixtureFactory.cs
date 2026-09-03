@@ -21,14 +21,44 @@ internal static class DocxFixtureFactory
     private static readonly XNamespace M =
         "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
-    public static string CreateCompatibilityFixture(string directory) =>
-        CreateFixture(directory, "office-compatible.docx", false, false);
+    public static string CreateCompatibilityFixture(string directory, bool styleVisibilityFlags = false) =>
+        CreateFixture(directory, "office-compatible.docx", false, false, styleVisibilityFlags);
 
     public static string CreateDanglingRelationshipFixture(string directory) =>
         CreateFixture(directory, "dangling-relationship.docx", true, false);
 
     public static string CreateIllegalFormulaFixture(string directory) =>
         CreateFixture(directory, "illegal-formula.docx", false, true);
+
+    public static string CreateInvalidCompatibilityFixture(
+        string directory,
+        string propertyName,
+        string corruption)
+    {
+        var path = CreateCompatibilityFixture(directory);
+        var partName = propertyName == "uiPriority" ? "word/styles.xml" : "word/document.xml";
+        var ns = propertyName == "uiPriority" ? W : M;
+        var document = ReadPart(path, partName);
+        var property = document.Descendants(ns + propertyName).Single();
+        switch (corruption)
+        {
+            case "duplicate-before":
+                property.Parent!.AddFirst(new XElement(property));
+                break;
+            case "duplicate-after":
+                property.AddAfterSelf(new XElement(property));
+                break;
+            case "illegal-child":
+                property.AddAfterSelf(new XElement(M + "limLoc", new XAttribute(M + "val", "undOvr")));
+                break;
+            default:
+                throw new ArgumentException($"Unknown fixture corruption: {corruption}", nameof(corruption));
+        }
+        using var archive = ZipFile.Open(path, ZipArchiveMode.Update);
+        archive.GetEntry(partName)!.Delete();
+        WriteEntry(archive, partName, document.ToString(SaveOptions.DisableFormatting));
+        return path;
+    }
 
     public static IReadOnlyList<string> ReadNormalizedOmml(string path)
     {
@@ -59,7 +89,8 @@ internal static class DocxFixtureFactory
         string directory,
         string fileName,
         bool danglingHeader,
-        bool illegalFormula)
+        bool illegalFormula,
+        bool styleVisibilityFlags = false)
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, fileName);
@@ -68,7 +99,10 @@ internal static class DocxFixtureFactory
         WriteEntry(archive, "_rels/.rels", RootRelationshipsXml);
         WriteEntry(archive, "word/document.xml", DocumentXml(danglingHeader, illegalFormula));
         WriteEntry(archive, "word/_rels/document.xml.rels", DocumentRelationshipsXml);
-        WriteEntry(archive, "word/styles.xml", StylesXml);
+        var styles = styleVisibilityFlags
+            ? StylesXml.Replace("<w:qFormat/>", "<w:semiHidden/><w:unhideWhenUsed/><w:qFormat/>", StringComparison.Ordinal)
+            : StylesXml;
+        WriteEntry(archive, "word/styles.xml", styles);
         return path;
     }
 
