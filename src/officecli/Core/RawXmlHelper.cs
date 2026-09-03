@@ -706,8 +706,8 @@ internal static class RawXmlHelper
     /// <summary>
     /// Preserve the strict SDK error while attaching compatibility metadata
     /// only when the validator identifies one exact, observed sibling-order
-    /// pattern and the reordered parent validates in isolation. The profile
-    /// layer decides whether that metadata changes an error to a warning.
+    /// pattern and the reordered parent validates in its original XML context.
+    /// The profile layer decides whether that metadata changes an error to a warning.
     /// </summary>
     private static ValidationError CreateValidationError(
         DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
@@ -725,8 +725,9 @@ internal static class RawXmlHelper
     /// <summary>
     /// Recognize four element-order variants emitted by Word/WPS documents.
     /// Namespace, part, parent, offending child, and immediate predecessor must
-    /// all match, and a deep copy of the parent must validate after only the
-    /// known child is moved. Hidden duplicate/illegal children remain blocking.
+    /// all match, and a deep copy of the parent in its part's XML context must
+    /// validate after only the known child is moved. Hidden duplicate/illegal
+    /// children remain blocking.
     /// </summary>
     private static string? GetOfficeCompatibilityReason(
         DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
@@ -798,7 +799,22 @@ internal static class RawXmlHelper
 
     private static bool IsValidAfterKnownReorder(OpenXmlElement parent, int childIndex)
     {
-        var copy = parent.CloneNode(true);
+        // Validate from the part root: Validate(element) does not inherit MC
+        // rules from ancestors. Keep the complete XML context, including scoped
+        // namespace bindings, ProcessContent and AlternateContent branches.
+        var ancestorIndexes = new Stack<int>();
+        var root = parent;
+        while (root.Parent is { } ancestor)
+        {
+            ancestorIndexes.Push(ancestor.ChildElements
+                .TakeWhile(sibling => !ReferenceEquals(sibling, root)).Count());
+            root = ancestor;
+        }
+        var contextCopy = root.CloneNode(true);
+        var copy = contextCopy;
+        foreach (var index in ancestorIndexes)
+            copy = copy.ChildElements[index];
+
         var child = copy.ChildElements[childIndex];
         var previous = copy.ChildElements[childIndex - 1];
         if (child.NamespaceUri == WordprocessingNamespace && child.LocalName == "uiPriority")
@@ -813,8 +829,16 @@ internal static class RawXmlHelper
         copy.InsertBefore(child, previous);
         try
         {
-            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365);
-            return !validator.Validate(copy).Any();
+            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365)
+            {
+                // Unrelated errors must not exhaust the limit before this
+                // parent is reached. Their original diagnostics are retained.
+                MaxNumberOfErrors = 0,
+            };
+            return !validator.Validate(contextCopy).Any(error =>
+                error.Node == null
+                || IsInSubtree(error.Node, copy)
+                || IsInSubtree(error.RelatedNode, copy));
         }
         catch (Exception)
         {
@@ -822,6 +846,13 @@ internal static class RawXmlHelper
             // original strict diagnostic; never modify the package being read.
             return false;
         }
+    }
+
+    private static bool IsInSubtree(OpenXmlElement? element, OpenXmlElement root)
+    {
+        return element != null
+            && (ReferenceEquals(element, root)
+                || element.Ancestors().Any(ancestor => ReferenceEquals(ancestor, root)));
     }
 
     private static bool IsSiblingOrder(
