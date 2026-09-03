@@ -42,6 +42,8 @@ Unknown records, template variants, private character mappings, font-only charac
 
 Default export fails if any equation is unsupported. `--preserve-unsupported` is an explicit opt-in to a mixed native/OLE document, **not** evidence that every equation is editable as Word math. Unsupported payloads remain opaque: their mathematical structure cannot be validated by this parser. Malformed supported MTEF, invalid CFB/header lengths, malformed XML and missing internal relationship targets still fail. External relationships are never fetched and OLE servers are never activated.
 
+OLE equations with `DrawAspect="Icon"` are unsupported for native conversion: replacing their icon with visible math would change the document's presentation. Both dry-run and export report `unsupported_icon_equation`; explicit preservation keeps the original object, preview, payload and relationships and reports `fullyNative: false`. Invalid `DrawAspect` values and malformed supported MTEF remain errors, not preservable warnings. `Content` and omitted `DrawAspect` retain the normal content-conversion behavior. The [OLE representation values](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.vml.office.oledrawaspectvalues) distinguish an icon from a content snapshot.
+
 Conversion is not a replacement for document validation: run `validate` on the result separately. On upstream v1.0.146, the HTML table renderer can omit text adjacent to native inline equations; that independent preview defect is fixed separately from this converter. The exported DOCX and text view retain the text.
 
 ## JSON
@@ -85,6 +87,8 @@ dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release -p:Version=1
 The suite checks operand ordering, OMML schema validity, corruption/unknown-feature rejection, CLI JSON and exits, mixed-content preservation, HTML formulas, and normalized OMML equality after changing adjacent text with `WordHandler` and saving. CI runs the tests on Windows, Linux and macOS and additionally tests the trimmed Windows x64 executable. No Release or npm publish is performed by this workflow.
 
 Root-storage regressions generate separate `x` and nested `y` streams, vary their physical directory order, and assert `x` in both dry-run JSON and exported OMML. Missing/ambiguous root streams and broken sibling trees must fail without output. The shared CFB reader also round-trips both equation and `Ole10Native` streams across mini-sector and regular-sector sizes. Run `dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --filter 'FullyQualifiedName~MathTypeStorageTests|FullyQualifiedName~RootEquation'`.
+
+Icon regressions cover a schema-valid icon-only document and a mixed document with other convertible equations. CLI tests check dry-run/export exit codes, visible diagnostics, unchanged icon XML and untouched resource bytes after explicit preservation. Invalid representation values and truncated MTEF remain failures. Run `dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --filter 'FullyQualifiedName~IconAspect|FullyQualifiedName~DrawAspect'`.
 
 Conversion CI sets `OFFICECLI_SKIP_UPDATE=1` to isolate the executable under test from upstream background updates and checks that its SHA-256 is unchanged after the suite. This is test isolation, not evidence that a build implements fixed-version protection. For a standalone MathType branch without the fork's release/update-protection changes, use the same opt-out when running conversion tests locally.
 

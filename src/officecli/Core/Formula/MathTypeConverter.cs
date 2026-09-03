@@ -107,6 +107,9 @@ internal static class MathTypeConverter
                         throw new MathTypeException("unsupported_floating_equation", "Floating OLE equations cannot be moved into the text flow implicitly.");
                     if ((string?)ole.Attribute("Type") != "Embed")
                         throw new MathTypeException("unsupported_linked_equation", "Linked equations are not downloaded or converted.");
+                    string? drawAspect = (string?)ole.Attribute("DrawAspect");
+                    if (drawAspect is not (null or "Content" or "Icon"))
+                        throw new MathTypeException("invalid_equation_draw_aspect", "OLE DrawAspect must be Content or Icon when specified.");
                     var partUri = PackUriHelper.CreatePartUri(new Uri("/" + entry.FullName, UriKind.Relative));
                     var part = package.GetPart(partUri);
                     if (string.IsNullOrEmpty(relationshipId) || !part.RelationshipExists(relationshipId))
@@ -118,6 +121,8 @@ internal static class MathTypeConverter
                     using var payload = payloadPart.GetStream(FileMode.Open, FileAccess.Read);
                     var bytes = ReadBounded(payload, MathTypeReader.MaxOleBytes);
                     var equation = MathTypeReader.ReadOle(bytes);
+                    if (drawAspect == "Icon")
+                        throw new MathTypeException("unsupported_icon_equation", "An icon-displayed OLE equation cannot be replaced with visible Word math without changing its presentation. Use --preserve-unsupported to keep the original object.");
                     conversions.Add(obj, equation);
                     xmlParts[entry.FullName] = xml;
                     record["status"] = output == null ? "convertible" : "pending";

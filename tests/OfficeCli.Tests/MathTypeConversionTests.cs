@@ -365,6 +365,119 @@ public class MathTypeConversionTests
         Assert.Single(xml.Descendants(W + "br"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CliIconAspectRequiresExplicitPreservationAndKeepsItsPresentation(bool mixed)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("icon.docx"), output = dir.File("mixed.docx");
+        CreateDocument(source, suite: mixed);
+        XNamespace o = "urn:schemas-microsoft-com:office:office";
+        ChangeMainXml(source, xml => xml.Descendants(o + "OLEObject").First().SetAttributeValue("DrawAspect", "Icon"));
+        using (var doc = WordprocessingDocument.Open(source, false))
+            Assert.Empty(new OpenXmlValidator().Validate(doc));
+        byte[] original = File.ReadAllBytes(source);
+        var before = Entries(source);
+        var icon = Xml(source).Descendants(W + "object").First();
+
+        foreach (bool dryRun in new[] { true, false })
+        {
+            string[] destination = dryRun ? ["--dry-run"] : ["--out", output];
+            var rejected = await Cli(["convert-equations", source, .. destination, "--json"]);
+            Assert.True(rejected.Exit == 1, rejected.Out + rejected.Error);
+            var failure = JsonNode.Parse(rejected.Out)!;
+            Assert.False(failure["success"]!.GetValue<bool>());
+            Assert.False(failure["data"]!["fullyNative"]!.GetValue<bool>());
+            Assert.Equal(1, failure["data"]!["unsupported"]!.GetValue<int>());
+            Assert.Equal("unsupported_icon_equation", Assert.Single(failure["errors"]!.AsArray())!["code"]!.GetValue<string>());
+            Assert.False(File.Exists(output));
+
+            var preserved = await Cli(["convert-equations", source, .. destination, "--preserve-unsupported", "--json"]);
+            Assert.True(preserved.Exit == 0, preserved.Out + preserved.Error);
+            var report = JsonNode.Parse(preserved.Out)!;
+            Assert.True(report["success"]!.GetValue<bool>());
+            Assert.False(report["data"]!["fullyNative"]!.GetValue<bool>());
+            Assert.Equal(dryRun || !mixed ? 0 : 5, report["data"]!["converted"]!.GetValue<int>());
+            Assert.Equal(1, report["data"]!["unsupported"]!.GetValue<int>());
+            Assert.Equal(0, report["data"]!["invalid"]!.GetValue<int>());
+            var iconResult = Assert.Single(report["data"]!["results"]!.AsArray(), r => r?["code"]?.GetValue<string>() == "unsupported_icon_equation");
+            Assert.Equal(dryRun ? "unsupported" : "preserved", iconResult!["status"]!.GetValue<string>());
+            Assert.Contains(report["warnings"]!.AsArray(), w => w!["code"]!.GetValue<string>() == "unsupported_icon_equation");
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+
+        var after = Xml(output);
+        Assert.True(XNode.DeepEquals(icon, after.Descendants(W + "object").First()));
+        Assert.Equal(mixed ? 3 : 0, after.Descendants(M + "oMath").Count());
+        string[] changed = mixed ? ["word/document.xml", "word/header1.xml", "word/footer1.xml", "word/footnotes.xml"] : [];
+        var entries = Entries(output);
+        Assert.Equal(before.Keys.Order(), entries.Keys.Order());
+        foreach (string part in before.Keys.Except(changed)) Assert.Equal(before[part], entries[part]);
+        var validation = await Cli("validate", output, "--json");
+        Assert.True(validation.Exit == 0, validation.Out + validation.Error);
+    }
+
+    [Theory]
+    [InlineData("icon")]
+    [InlineData("CONTENT")]
+    [InlineData("Unknown")]
+    public void InvalidDrawAspectValuesCannotBePreservedAsSupportedPresentation(string value)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("invalid-aspect.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        XNamespace o = "urn:schemas-microsoft-com:office:office";
+        ChangeMainXml(source, xml => xml.Descendants(o + "OLEObject").Single().SetAttributeValue("DrawAspect", value));
+        using (var doc = WordprocessingDocument.Open(source, false))
+            Assert.NotEmpty(new OpenXmlValidator().Validate(doc));
+        byte[] original = File.ReadAllBytes(source);
+        foreach (bool preserve in new[] { false, true })
+        {
+            var report = MathTypeConverter.Convert(source, output, preserve);
+            Assert.False(report["success"]!.GetValue<bool>());
+            Assert.Equal(1, report["data"]!["invalid"]!.GetValue<int>());
+            Assert.Equal("invalid_equation_draw_aspect", Assert.Single(report["errors"]!.AsArray())!["code"]!.GetValue<string>());
+            Assert.False(File.Exists(output));
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IconAspectDoesNotHideMalformedSupportedMtef(bool preserve)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("broken-icon.docx"), output = dir.File("native.docx");
+        CreateDocument(source, Equation(Fraction)[..^3]);
+        XNamespace o = "urn:schemas-microsoft-com:office:office";
+        ChangeMainXml(source, xml => xml.Descendants(o + "OLEObject").Single().SetAttributeValue("DrawAspect", "Icon"));
+        var report = MathTypeConverter.Convert(source, output, preserve);
+        Assert.False(report["success"]!.GetValue<bool>());
+        Assert.Equal(1, report["data"]!["invalid"]!.GetValue<int>());
+        Assert.Equal("invalid_mtef", Assert.Single(report["errors"]!.AsArray())!["code"]!.GetValue<string>());
+        Assert.False(File.Exists(output));
+    }
+
+    [Theory]
+    [InlineData("Content")]
+    [InlineData(null)]
+    public void ContentAndUnspecifiedDrawAspectStillConvert(string? value)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("content.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        XNamespace o = "urn:schemas-microsoft-com:office:office";
+        ChangeMainXml(source, xml => xml.Descendants(o + "OLEObject").Single().SetAttributeValue("DrawAspect", value));
+        using (var doc = WordprocessingDocument.Open(source, false))
+            Assert.Empty(new OpenXmlValidator().Validate(doc));
+        var report = MathTypeConverter.Convert(source, output);
+        Assert.True(report["success"]!.GetValue<bool>());
+        Assert.True(report["data"]!["fullyNative"]!.GetValue<bool>());
+        Assert.Single(Xml(output).Descendants(M + "oMath"));
+    }
+
     [Fact]
     public void UnsupportedEquationsAbortUnlessExplicitlyPreserved()
     {
