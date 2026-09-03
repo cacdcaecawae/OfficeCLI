@@ -501,6 +501,8 @@ See `officecli --help` for full details on exit codes and error formats.
 
 ## Command Reference
 
+PaperAI fork: [`convert-equations`](docs/mathtype-native-docx.md) reads supported MathType MTEF v5 equations and exports editable native Word formulas to a new DOCX. This experimental command is not part of the upstream npm release; unsupported objects block conversion unless explicitly preserved as OLE.
+
 | Command | Description |
 |---------|-------------|
 | [`create`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-create) | Create a blank .docx, .xlsx, or .pptx (type from extension) |

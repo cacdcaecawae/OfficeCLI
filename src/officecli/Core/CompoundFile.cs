@@ -207,8 +207,9 @@ internal static class CompoundFile
     // ==================== Reader ====================
 
     /// <summary>
-    /// Extract the stream named <paramref name="streamName"/> from a CFB byte
-    /// array. Returns the stream bytes, or <c>null</c> if the input is not a
+    /// Extract the root storage's direct child stream named <paramref name="streamName"/>
+    /// from a CFB byte array. Nested and unreferenced entries are not candidates.
+    /// Returns the stream bytes, or <c>null</c> if the input is not a
     /// valid CFB, the stream is absent, or any structural inconsistency is hit.
     /// </summary>
     public static byte[]? ReadStream(byte[] cfb, string streamName)
@@ -304,40 +305,56 @@ internal static class CompoundFile
                 return outBuf;
             }
 
-            // Parse the directory and locate Root Entry + the target stream.
+            // Entry zero is the root. Its child pointer and sibling tree define
+            // the root's immediate children; physical directory order does not.
             var dirChain = Chain(firstDir);
-            if (dirChain == null) return null;
-            var target = Encoding.Unicode.GetBytes(streamName);
-            uint rootStart = ENDOFCHAIN;
-            long rootSize = 0;
+            if (dirChain == null || dirChain.Count == 0) return null;
+            int entriesPerSector = sectorSize / DirEntrySize;
+            int entryCount = checked(dirChain.Count * entriesPerSector);
+            int EntryOffset(uint id) => SectorOffset(dirChain[(int)id / entriesPerSector])
+                + (int)(id % (uint)entriesPerSector) * DirEntrySize;
+            int rootOffset = EntryOffset(0);
+            if (cfb[rootOffset + 66] != 5
+                || BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(rootOffset + 68)) != NOSTREAM
+                || BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(rootOffset + 72)) != NOSTREAM)
+                return null;
+            uint rootStart = BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(rootOffset + 116));
+            long rootSize = (long)BinaryPrimitives.ReadUInt64LittleEndian(cfb.AsSpan(rootOffset + 120));
+            string target = FoldDirectoryName(streamName);
             bool foundStream = false;
             uint streamStart = ENDOFCHAIN;
             long streamSize = 0;
-
-            foreach (uint dsec in dirChain)
+            var pending = new Stack<uint>();
+            var visited = new HashSet<uint>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            pending.Push(BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(rootOffset + 76)));
+            while (pending.Count > 0)
             {
-                int baseOff = SectorOffset(dsec);
-                for (int e = 0; e + DirEntrySize <= sectorSize; e += DirEntrySize)
+                uint id = pending.Pop();
+                if (id == NOSTREAM) continue;
+                if (id == 0 || id >= (uint)entryCount || !visited.Add(id)) return null;
+                int off = EntryOffset(id);
+                byte objType = cfb[off + 66];
+                if (objType is not (1 or 2)) return null;
+                int nameLength = BinaryPrimitives.ReadUInt16LittleEndian(cfb.AsSpan(off + 64));
+                if (nameLength is < 4 or > 64 || nameLength % 2 != 0
+                    || BinaryPrimitives.ReadUInt16LittleEndian(cfb.AsSpan(off + nameLength - 2)) != 0)
+                    return null;
+                string name = Encoding.Unicode.GetString(cfb, off, nameLength - 2);
+                string foldedName = FoldDirectoryName(name);
+                if (name.Contains('\0') || !names.Add(foldedName)) return null;
+                if (objType == 2 && BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 76)) != NOSTREAM)
+                    return null;
+                pending.Push(BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 68)));
+                pending.Push(BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 72)));
+                // Do not follow a storage's child pointer into a nested storage.
+                // Finish the sibling tree even after a match to reject ambiguity.
+                if (foldedName == target)
                 {
-                    int off = baseOff + e;
-                    byte objType = cfb[off + 66];
-                    if (objType == 5) // root
-                    {
-                        rootStart = BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 116));
-                        rootSize = (long)BinaryPrimitives.ReadUInt64LittleEndian(cfb.AsSpan(off + 120));
-                    }
-                    else if (objType == 2 && !foundStream) // stream
-                    {
-                        int nameLen = BinaryPrimitives.ReadUInt16LittleEndian(cfb.AsSpan(off + 64));
-                        nameLen = Math.Clamp(nameLen, 0, 64);
-                        int cmpLen = nameLen >= 2 ? nameLen - 2 : 0; // drop null terminator
-                        if (cmpLen == target.Length && cfb.AsSpan(off, cmpLen).SequenceEqual(target))
-                        {
-                            streamStart = BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 116));
-                            streamSize = (long)BinaryPrimitives.ReadUInt64LittleEndian(cfb.AsSpan(off + 120));
-                            foundStream = true;
-                        }
-                    }
+                    if (objType != 2) return null;
+                    streamStart = BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(off + 116));
+                    streamSize = (long)BinaryPrimitives.ReadUInt64LittleEndian(cfb.AsSpan(off + 120));
+                    foundStream = true;
                 }
             }
 
@@ -385,4 +402,7 @@ internal static class CompoundFile
             return null;
         }
     }
+
+    // MS-CFB compares uppercased UTF-16 code units, without combining surrogates.
+    private static string FoldDirectoryName(string name) => new(name.Select(char.ToUpperInvariant).ToArray());
 }
