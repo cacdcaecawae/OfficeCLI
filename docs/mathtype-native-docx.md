@@ -46,7 +46,7 @@ OLE equations with `DrawAspect="Icon"` are unsupported for native conversion: re
 
 The MTEF CHAR `0x02` function-start flag carries semantics beyond its letters (for example, the start of `sin`). This converter does **not yet preserve that function structure**, so it reports `unsupported_function_start` instead of returning plain runs as a successful conversion. Default dry-run/export fail; explicit preservation keeps the original OLE and reports a mixed, not fully native, document. The supported record structure is checked before this limitation is reported: truncation and illegal known template structure still fail even with preservation. Ordinary unmarked variables are not guessed to be functions. See the [MTEF CHAR options](https://docs.wiris.com/en_US/mathtype-mtef-v5-mathtype-40-and-later).
 
-Conversion is not a replacement for document validation: run `validate` on the result separately. On upstream v1.0.146, the HTML table renderer can omit text adjacent to native inline equations; that independent preview defect is fixed separately from this converter. The exported DOCX and text view retain the text.
+Conversion is not a replacement for document validation: run `validate` on the result separately. The fork also includes the table-preview fix that preserves text adjacent to native inline equations; upstream v1.0.146 alone does not include that fix.
 
 ## JSON
 
@@ -94,9 +94,9 @@ Icon regressions cover a schema-valid icon-only document and a mixed document wi
 
 Function-start regressions cover named functions, nested slots and template glyphs, combined character options, truncation, and malformed templates. CLI tests require explicit OLE preservation and prohibit a fabricated OMML/LaTeX result for the unsupported equation. Run `dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --filter FullyQualifiedName~FunctionStart`.
 
-Conversion CI sets `OFFICECLI_SKIP_UPDATE=1` to isolate the executable under test from upstream background updates and checks that its SHA-256 is unchanged after the suite. This is test isolation, not evidence that a build implements fixed-version protection. For a standalone MathType branch without the fork's release/update-protection changes, use the same opt-out when running conversion tests locally.
+Conversion CI sets `OFFICECLI_SKIP_UPDATE=1` to isolate the executable under test from upstream background updates and checks that its SHA-256 is unchanged after the suite. This is test isolation, not evidence that a build implements fixed-version protection.
 
-When combined with those protection changes, the unfiltered suite also runs `PinnedForkTests`: staged updates must remain untouched, `config autoUpdate` must report `false`, enabling it must fail, and `__update-check__` must be a no-op. An additional native CI step runs these tests with `OFFICECLI_SKIP_UPDATE=0`, invokes the executable with a synthetic non-executable `.update` file beside it, and requires both files' SHA-256 values to remain unchanged. That step is explicitly conditional on the protection test file being present; the standalone MathType branch does not implement that feature or claim its protection checks passed.
+The integrated fork includes `PinnedForkTests`: staged updates must remain untouched, `config autoUpdate` must report `false`, enabling it must fail, and `__update-check__` must be a no-op. A mandatory native CI step runs these tests with `OFFICECLI_SKIP_UPDATE=0`, invokes the executable with a synthetic non-executable `.update` file beside it, and requires both files' SHA-256 values to remain unchanged. Missing protection tests fail the job rather than skipping the probe.
 
 Keep `OFFICECLI_TEST_BINARY` pointed at the published executable and pass the same `Version` to `dotnet test`; testing only the default managed build does not verify the native artifact's protection. Protection tests must also pass without the background-update opt-out before releasing the combined fork.
 

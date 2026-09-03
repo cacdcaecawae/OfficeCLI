@@ -66,11 +66,13 @@ jobs:
           }
           if ($testExit -ne 0) { throw 'Native conversion tests failed.' }
       - name: Verify integrated runtime protection without the update opt-out
-        if: ${{ hashFiles('tests/OfficeCli.Tests/PinnedForkTests.cs') != '' }}
         shell: pwsh
         env:
           OFFICECLI_SKIP_UPDATE: '0'
         run: |
+          if (-not (Test-Path -LiteralPath 'tests/OfficeCli.Tests/PinnedForkTests.cs')) {
+            throw 'The integrated fork must include its runtime protection tests.'
+          }
           $env:OFFICECLI_TEST_BINARY = (Resolve-Path '.artifacts/native/officecli.exe').Path
           $binaryHash = (Get-FileHash -LiteralPath $env:OFFICECLI_TEST_BINARY -Algorithm SHA256).Hash
           $pending = $env:OFFICECLI_TEST_BINARY + '.update'
