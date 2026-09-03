@@ -288,6 +288,69 @@ public class MathTypeReaderTests
         Assert.Throws<MathTypeException>(() => Read(Template(11, 0, Line(Character('x')))));
     }
 
+    [Theory]
+    [InlineData("sin")]
+    [InlineData("cos")]
+    [InlineData("custom")]
+    public void FunctionStartCannotBeAcceptedAsPlainCharacters(string name)
+    {
+        var data = Equation(FunctionName(name), Character('x'));
+        var error = Assert.Throws<MathTypeException>(() => MathTypeReader.ReadMtef(data));
+        Assert.Equal("unsupported_function_start", error.Code);
+        Assert.Equal(Raw(true).Length + 2, error.Offset);
+        Assert.Equal(0x02, data[error.Offset]);
+    }
+
+    [Theory]
+    [InlineData(0x02)]
+    [InlineData(0x03)]
+    [InlineData(0x06)]
+    [InlineData(0x12)]
+    public void FunctionStartRemainsExplicitWithOtherCharacterOptions(int options)
+    {
+        byte[] start = Character('s', 2);
+        start[1] = (byte)options;
+        byte[] encoding = options == 0x06 ? [(byte)'s'] : options == 0x12 ? [(byte)'s', 0] : [];
+        byte[] embellishments = options == 0x03 ? [6, 0, 9, 0] : [];
+        var error = Assert.Throws<MathTypeException>(() => Read(
+            Join(start, encoding, embellishments), Character('i', 2), Character('n', 2), Character('x')));
+        Assert.Equal("unsupported_function_start", error.Code);
+    }
+
+    [Theory]
+    [InlineData("fraction")]
+    [InlineData("script")]
+    [InlineData("glyph")]
+    public void FunctionStartCannotDisappearInsideATemplate(string location)
+    {
+        byte[] glyph = Character('∑', 6);
+        glyph[1] = 0x02;
+        byte[] record = location switch
+        {
+            "fraction" => Template(11, 0, Line(FunctionName("sin"), Character('x')), Line(Character('y'))),
+            "script" => Join(Character('x'), Template(28, 0, NullLine, Line(FunctionName("sin"), Character('y')))),
+            _ => Template(16, 0x70, Line(Character('x')), Line(Text("a")), Line(Text("b")), glyph),
+        };
+        Assert.Equal("unsupported_function_start", Assert.Throws<MathTypeException>(() => Read(record)).Code);
+    }
+
+    [Fact]
+    public void FunctionStartDoesNotHideTruncationOrMalformedKnownTemplates()
+    {
+        var data = Equation(FunctionName("sin"), Character('x'));
+        for (int length = 0; length < data.Length; length++)
+            Assert.Equal("invalid_mtef", Assert.Throws<MathTypeException>(() => MathTypeReader.ReadMtef(data[..length])).Code);
+        Assert.Equal("invalid_mtef", Assert.Throws<MathTypeException>(() => MathTypeReader.ReadMtef(Join(data, [0]))).Code);
+        Assert.Equal("invalid_mtef", Assert.Throws<MathTypeException>(() => Read(
+            FunctionName("sin"), Template(11, 0, Line(Character('x'))))).Code);
+    }
+
+    [Fact]
+    public void UnmarkedVariableLettersAreNotGuessedToBeAFunction()
+    {
+        Assert.Equal("sinx", Read(Text("sinx")).Value);
+    }
+
     [Fact]
     public void NestingIsBounded()
     {

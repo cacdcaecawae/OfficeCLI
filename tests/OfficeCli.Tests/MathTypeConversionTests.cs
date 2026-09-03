@@ -502,6 +502,70 @@ public class MathTypeConversionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task CliFunctionStartFailsWithoutLossyOutputOrPreservesTheOriginalOle(bool mixed)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("function.docx"), output = dir.File("mixed.docx");
+        CreateDocument(source, Equation(FunctionName("sin"), Character('x')), suite: mixed);
+        byte[] original = File.ReadAllBytes(source);
+        var before = Entries(source);
+        var function = Xml(source).Descendants(W + "object").First();
+        foreach (bool dryRun in new[] { true, false })
+        {
+            string[] destination = dryRun ? ["--dry-run"] : ["--out", output];
+            var rejected = await Cli(["convert-equations", source, .. destination, "--json"]);
+            Assert.True(rejected.Exit == 1, rejected.Out + rejected.Error);
+            var failure = JsonNode.Parse(rejected.Out)!;
+            Assert.False(failure["success"]!.GetValue<bool>());
+            Assert.Equal("unsupported_function_start", Assert.Single(failure["errors"]!.AsArray())!["code"]!.GetValue<string>());
+            Assert.False(File.Exists(output));
+
+            var preserved = await Cli(["convert-equations", source, .. destination, "--preserve-unsupported", "--json"]);
+            Assert.True(preserved.Exit == 0, preserved.Out + preserved.Error);
+            var report = JsonNode.Parse(preserved.Out)!;
+            Assert.True(report["success"]!.GetValue<bool>());
+            Assert.False(report["data"]!["fullyNative"]!.GetValue<bool>());
+            Assert.Equal(1, report["data"]!["unsupported"]!.GetValue<int>());
+            Assert.Equal(0, report["data"]!["invalid"]!.GetValue<int>());
+            Assert.Equal(dryRun || !mixed ? 0 : 5, report["data"]!["converted"]!.GetValue<int>());
+            var functionResult = Assert.Single(report["data"]!["results"]!.AsArray(), r => r?["code"]?.GetValue<string>() == "unsupported_function_start");
+            Assert.Equal(dryRun ? "unsupported" : "preserved", functionResult!["status"]!.GetValue<string>());
+            Assert.Null(functionResult["omml"]);
+            Assert.Null(functionResult["latex"]);
+            Assert.Contains(report["warnings"]!.AsArray(), w => w!["code"]!.GetValue<string>() == "unsupported_function_start");
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+
+        Assert.True(XNode.DeepEquals(function, Xml(output).Descendants(W + "object").First()));
+        Assert.Equal(mixed ? 3 : 0, Xml(output).Descendants(M + "oMath").Count());
+        string[] changed = mixed ? ["word/document.xml", "word/header1.xml", "word/footer1.xml", "word/footnotes.xml"] : [];
+        var entries = Entries(output);
+        Assert.Equal(before.Keys.Order(), entries.Keys.Order());
+        foreach (string part in before.Keys.Except(changed)) Assert.Equal(before[part], entries[part]);
+        var validation = await Cli("validate", output, "--json");
+        Assert.True(validation.Exit == 0, validation.Out + validation.Error);
+    }
+
+    [Fact]
+    public async Task CliFunctionStartDoesNotMakeMalformedMtefPreservable()
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("broken-function.docx"), output = dir.File("mixed.docx");
+        CreateDocument(source, Equation(FunctionName("sin"), Template(11, 0, Line(Character('x')))));
+        byte[] original = File.ReadAllBytes(source);
+        var rejected = await Cli("convert-equations", source, "--out", output, "--preserve-unsupported", "--json");
+        Assert.True(rejected.Exit == 1, rejected.Out + rejected.Error);
+        var report = JsonNode.Parse(rejected.Out)!;
+        Assert.False(report["success"]!.GetValue<bool>());
+        Assert.Equal(1, report["data"]!["invalid"]!.GetValue<int>());
+        Assert.Equal("invalid_mtef", Assert.Single(report["errors"]!.AsArray())!["code"]!.GetValue<string>());
+        Assert.False(File.Exists(output));
+        Assert.Equal(original, File.ReadAllBytes(source));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void MalformedMtefFailsEvenWhenUnsupportedEquationsMayBePreserved(bool preserve)
     {
         using var dir = new MathTypeTestDirectory();

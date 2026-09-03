@@ -32,6 +32,7 @@ internal sealed partial class MathTypeReader
     private readonly byte[] _data;
     private int _position;
     private int _records;
+    private int? _functionStartOffset;
     private string? _color;
     private readonly List<string> _colors = [];
     private readonly List<(int Font, int Style)> _fontStyles = [];
@@ -94,6 +95,10 @@ internal sealed partial class MathTypeReader
         var error = new OpenXmlValidator().Validate(math).FirstOrDefault();
         if (error != null)
             throw reader.Invalid($"Converted OMML is invalid: {error.Description}");
+        // Check the supported record structure before reporting this limitation,
+        // so a function marker cannot hide truncation or an invalid template.
+        if (reader._functionStartOffset is int functionOffset)
+            throw new MathTypeException("unsupported_function_start", "MTEF function-start semantics cannot yet be preserved in native Word math.", functionOffset);
         return new MathTypeEquation(math, (options & 1) != 0);
     }
 
@@ -144,7 +149,9 @@ internal sealed partial class MathTypeReader
             }
             case 2:
             {
+                int optionOffset = _position;
                 int options = Options(0x3f);
+                if ((options & 2) != 0) _functionStartOffset ??= optionOffset;
                 int typeface = Signed();
                 if ((options & 0x14) == 0x14) throw Invalid("Conflicting character encodings.");
                 int code = (options & 0x20) == 0 ? UInt16() : -1;

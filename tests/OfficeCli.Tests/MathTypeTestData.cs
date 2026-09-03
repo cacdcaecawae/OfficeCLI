@@ -21,6 +21,12 @@ internal static class MathTypeTestData
     internal static byte[] NullLine => [1, 1];
     internal static byte[] Character(char value, int typeface = 3) => [2, 0, (byte)(typeface + 128), (byte)value, (byte)(value >> 8)];
     internal static byte[] Text(string value) => Join(value.Select(c => Character(c)).ToArray());
+    internal static byte[] FunctionName(string value)
+    {
+        var characters = value.Select(c => Character(c, 2)).ToArray();
+        characters[0][1] = 0x02;
+        return Join(characters);
+    }
     internal static byte[] Template(int selector, int variation, params byte[][] items) => Join(
         [3, 0, (byte)selector], variation >= 128 ? [(byte)((variation & 127) | 128), (byte)(variation >> 8)] : [(byte)variation],
         [0], Join(items), [0]);
