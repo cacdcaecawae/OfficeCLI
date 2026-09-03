@@ -679,11 +679,7 @@ internal static class RawXmlHelper
             if (e == null) continue;
             try
             {
-                errors.Add(new ValidationError(
-                    e.ErrorType.ToString(),
-                    e.Description,
-                    e.Path?.XPath,
-                    e.Part?.Uri.ToString()));
+                errors.Add(CreateValidationError(e));
             }
             catch (Exception ex)
             {
@@ -703,6 +699,182 @@ internal static class RawXmlHelper
         // see IsBenignFontChildOrderError.
         errors.RemoveAll(IsBenignFontChildOrderError);
         return errors;
+    }
+
+    private const string OfficeMathNamespace =
+        "http://schemas.openxmlformats.org/officeDocument/2006/math";
+    private const string WordprocessingNamespace =
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /// <summary>
+    /// Preserve the strict SDK error while attaching compatibility metadata
+    /// only when the validator identifies one exact, observed sibling-order
+    /// pattern and the reordered parent validates in its original XML context.
+    /// The profile layer decides whether that metadata changes an error to a warning.
+    /// </summary>
+    private static ValidationError CreateValidationError(
+        DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
+    {
+        return new ValidationError(
+            error.ErrorType.ToString(),
+            error.Description,
+            error.Path?.XPath,
+            error.Part?.Uri.ToString())
+        {
+            OfficeCompatibilityReason = GetOfficeCompatibilityReason(error),
+        };
+    }
+
+    /// <summary>
+    /// Recognize four element-order variants emitted by Word/WPS documents.
+    /// Namespace, part, parent, offending child, and immediate predecessor must
+    /// all match, and a deep copy of the parent in its part's XML context must
+    /// validate after only the known child is moved. Hidden duplicate/illegal
+    /// children remain blocking.
+    /// </summary>
+    private static string? GetOfficeCompatibilityReason(
+        DocumentFormat.OpenXml.Validation.ValidationErrorInfo error)
+    {
+        if (error.ErrorType != ValidationErrorType.Schema
+            || error.Node == null
+            || error.RelatedNode == null
+            || error.Part == null)
+            return null;
+
+        var parent = error.Node;
+        var child = error.RelatedNode;
+        var expectedDescription =
+            $"The element has unexpected child element '{child.NamespaceUri}:{child.LocalName}'.";
+        if (!string.Equals(error.Description, expectedDescription, StringComparison.Ordinal))
+            return null;
+
+        OpenXmlElement? previous = null;
+        var foundChild = false;
+        var childIndex = 0;
+        foreach (var sibling in parent.ChildElements)
+        {
+            if (ReferenceEquals(sibling, child))
+            {
+                foundChild = true;
+                break;
+            }
+            previous = sibling;
+            childIndex++;
+        }
+        if (!foundChild || previous == null) return null;
+
+        var part = error.Part.Uri.ToString();
+        string? reason = null;
+        if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "rPr", OfficeMathNamespace,
+                previous, "sty", OfficeMathNamespace,
+                child, "scr", OfficeMathNamespace))
+        {
+            reason = "Word/WPS preserves m:scr immediately after m:sty in m:rPr; Open XML SDK 3.4.1 enforces the strict sequence with m:scr before m:sty.";
+        }
+        else if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "naryPr", OfficeMathNamespace,
+                previous, "grow", OfficeMathNamespace,
+                child, "limLoc", OfficeMathNamespace))
+        {
+            reason = "Word/WPS preserves m:limLoc immediately after m:grow in m:naryPr; Open XML SDK 3.4.1 enforces the strict sequence with m:limLoc before m:grow.";
+        }
+        else if (part == "/word/document.xml"
+            && IsSiblingOrder(
+                parent, "mPr", OfficeMathNamespace,
+                previous, "mcs", OfficeMathNamespace,
+                child, "plcHide", OfficeMathNamespace))
+        {
+            reason = "Word/WPS preserves m:plcHide immediately after m:mcs in m:mPr; Open XML SDK 3.4.1 enforces the strict sequence with m:plcHide before m:mcs.";
+        }
+        else if (part == "/word/styles.xml"
+            && IsSiblingOrder(
+                parent, "style", WordprocessingNamespace,
+                previous, "qFormat", WordprocessingNamespace,
+                child, "uiPriority", WordprocessingNamespace))
+        {
+            reason = "Word/WPS preserves w:uiPriority immediately after w:qFormat in w:style; Open XML SDK 3.4.1 requires w:uiPriority before w:semiHidden, w:unhideWhenUsed, and w:qFormat.";
+        }
+        return reason != null && IsValidAfterKnownReorder(parent, childIndex) ? reason : null;
+    }
+
+    private static bool IsValidAfterKnownReorder(OpenXmlElement parent, int childIndex)
+    {
+        // Validate from the part root: Validate(element) does not inherit MC
+        // rules from ancestors. Keep the complete XML context, including scoped
+        // namespace bindings, ProcessContent and AlternateContent branches.
+        var ancestorIndexes = new Stack<int>();
+        var root = parent;
+        while (root.Parent is { } ancestor)
+        {
+            ancestorIndexes.Push(ancestor.ChildElements
+                .TakeWhile(sibling => !ReferenceEquals(sibling, root)).Count());
+            root = ancestor;
+        }
+        var contextCopy = root.CloneNode(true);
+        var copy = contextCopy;
+        foreach (var index in ancestorIndexes)
+            copy = copy.ChildElements[index];
+
+        var child = copy.ChildElements[childIndex];
+        var previous = copy.ChildElements[childIndex - 1];
+        if (child.NamespaceUri == WordprocessingNamespace && child.LocalName == "uiPriority")
+        {
+            // Visibility flags can precede qFormat, but uiPriority must precede
+            // all three. Move only uiPriority; retain every other node/value.
+            previous = copy.ChildElements.First(sibling =>
+                sibling.NamespaceUri == WordprocessingNamespace
+                && sibling.LocalName is "semiHidden" or "unhideWhenUsed" or "qFormat");
+        }
+        child.Remove();
+        copy.InsertBefore(child, previous);
+        try
+        {
+            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365)
+            {
+                // Unrelated errors must not exhaust the limit before this
+                // parent is reached. Their original diagnostics are retained.
+                MaxNumberOfErrors = 0,
+            };
+            return !validator.Validate(contextCopy).Any(error =>
+                error.Node == null
+                || IsInSubtree(error.Node, copy)
+                || IsInSubtree(error.RelatedNode, copy));
+        }
+        catch (Exception)
+        {
+            // A validator failure is not evidence of compatibility. Keep the
+            // original strict diagnostic; never modify the package being read.
+            return false;
+        }
+    }
+
+    private static bool IsInSubtree(OpenXmlElement? element, OpenXmlElement root)
+    {
+        return element != null
+            && (ReferenceEquals(element, root)
+                || element.Ancestors().Any(ancestor => ReferenceEquals(ancestor, root)));
+    }
+
+    private static bool IsSiblingOrder(
+        OpenXmlElement parent,
+        string parentName,
+        string parentNamespace,
+        OpenXmlElement previous,
+        string previousName,
+        string previousNamespace,
+        OpenXmlElement child,
+        string childName,
+        string childNamespace)
+    {
+        return parent.LocalName == parentName
+            && parent.NamespaceUri == parentNamespace
+            && previous.LocalName == previousName
+            && previous.NamespaceUri == previousNamespace
+            && child.LocalName == childName
+            && child.NamespaceUri == childNamespace;
     }
 
     /// <summary>

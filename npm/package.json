@@ -1,16 +1,16 @@
 {
   "name": "@officecli/officecli",
-  "version": "1.0.123",
-  "description": "OfficeCLI — CLI for reading and writing Office documents (.docx, .xlsx, .pptx) via a document DOM API. The native binary is fetched on install for your platform.",
+  "version": "1.0.146-paperai.1",
+  "description": "PaperAI fork of OfficeCLI 1.0.146 with Office-compatible DOCX validation. The native binary is fetched from the fork's immutable GitHub Release.",
   "license": "Apache-2.0",
   "author": "goworm",
-  "homepage": "https://github.com/iOfficeAI/OfficeCLI",
+  "homepage": "https://github.com/cacdcaecawae/OfficeCLI#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iOfficeAI/OfficeCLI.git"
+    "url": "git+https://github.com/cacdcaecawae/OfficeCLI.git"
   },
   "bugs": {
-    "url": "https://github.com/iOfficeAI/OfficeCLI/issues"
+    "url": "https://github.com/cacdcaecawae/OfficeCLI/issues"
   },
   "keywords": [
     "office",
@@ -21,7 +21,8 @@
     "excel",
     "powerpoint",
     "ooxml",
-    "cli"
+    "cli",
+    "paperai"
   ],
   "bin": {
     "officecli": "officecli.js"
@@ -31,7 +32,8 @@
     ".": "./lib/install-binary.js"
   },
   "scripts": {
-    "postinstall": "node install.js"
+    "postinstall": "node install.js",
+    "test": "node test/install-binary.test.js"
   },
   "files": [
     "officecli.js",

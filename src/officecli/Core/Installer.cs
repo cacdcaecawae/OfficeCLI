@@ -252,6 +252,10 @@ internal static class Installer
     /// </summary>
     internal static void MaybeAutoInstall(string[] args)
     {
+        // The npm bin and directly downloaded Release asset remain local to
+        // their owner. A bare command must not create a global fork install.
+        if (UpdateChecker.IsPinnedFork) return;
+
         try
         {
             // Opt-out

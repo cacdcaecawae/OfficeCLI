@@ -126,4 +126,11 @@ public interface IDocumentHandler : IDisposable
     void Save();
 }
 
-public record ValidationError(string ErrorType, string Description, string? Path, string? Part);
+public record ValidationError(string ErrorType, string Description, string? Path, string? Part)
+{
+    /// <summary>
+    /// Explains why this exact SDK diagnostic can become a warning under the
+    /// office-compatible profile. Null diagnostics remain blocking.
+    /// </summary>
+    public string? OfficeCompatibilityReason { get; init; }
+}
