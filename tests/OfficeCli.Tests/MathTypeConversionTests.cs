@@ -42,8 +42,10 @@ public class MathTypeConversionTests
         Assert.Single(Directory.GetFiles(dir.Path));
     }
 
-    [Fact]
-    public void XmlContentTypeFindsEquationsWithoutAnXmlFileExtension()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void XmlContentTypeFindsEquationsWithoutAnXmlFileExtension(bool mixedCaseOverride)
     {
         using var dir = new MathTypeTestDirectory();
         string source = dir.File("source.docx"), output = dir.File("native.docx");
@@ -64,12 +66,107 @@ public class MathTypeConversionTests
             main.CreateRelationship(new Uri("header.native", UriKind.Relative), headerRef.TargetMode, headerRef.RelationshipType, headerRef.Id);
             package.DeletePart(oldUri);
         }
+        if (mixedCaseOverride)
+        {
+            ChangeXmlPart(source, "[Content_Types].xml", xml => xml.Root!.Add(
+                new XElement(xml.Root.Name.Namespace + "Override", new XAttribute("PartName", "/WORD/HEADER.NATIVE"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"))));
+        }
+        using (var original = WordprocessingDocument.Open(source, false))
+            Assert.Empty(new OpenXmlValidator().Validate(original));
         var report = MathTypeConverter.Convert(source, output);
         Assert.True(report["success"]!.GetValue<bool>());
         Assert.Equal(6, report["data"]!["converted"]!.GetValue<int>());
         Assert.Equal("h", Assert.Single(Xml(output, "word/header.native").Descendants(M + "oMath")).Value);
         using var doc = WordprocessingDocument.Open(output, false);
         Assert.Empty(new OpenXmlValidator().Validate(doc));
+    }
+
+    [Theory]
+    [InlineData("xml", false)]
+    [InlineData("xml", true)]
+    [InlineData("native", false)]
+    [InlineData("native", true)]
+    public async Task CliMainPartCasingFollowsOpcAndPreservesEntryNames(string extension, bool uppercaseEntry)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("source.docx"), output = dir.File("native.docx");
+        CreateDocument(source, suite: true);
+        string mainEntry = ChangeMainPartCasing(source, extension, uppercaseEntry);
+        if (Environment.GetEnvironmentVariable("OFFICECLI_MATHTYPE_ARTIFACTS") is { Length: > 0 } artifactDirectory)
+        {
+            Directory.CreateDirectory(artifactDirectory);
+            File.Copy(source, Path.Combine(artifactDirectory, $"opc-{extension}-{uppercaseEntry}-synthetic.docx"), overwrite: false);
+        }
+        using (var doc = WordprocessingDocument.Open(source, false))
+            Assert.Empty(new OpenXmlValidator().Validate(doc));
+        byte[] original = File.ReadAllBytes(source);
+        var before = Entries(source);
+
+        var inspect = await Cli("convert-equations", source, "--dry-run", "--json");
+        Assert.True(inspect.Exit == 0, inspect.Out + inspect.Error);
+        var inspected = JsonNode.Parse(inspect.Out)!;
+        Assert.True(inspected["success"]!.GetValue<bool>());
+        Assert.Equal(6, inspected["data"]!["convertible"]!.GetValue<int>());
+        Assert.Equal(0, inspected["data"]!["converted"]!.GetValue<int>());
+        Assert.Equal(1, inspected["data"]!["existingNativeEquations"]!.GetValue<int>());
+        Assert.Contains(inspected["data"]!["results"]!.AsArray(), r => r!["part"]!.GetValue<string>() == "/" + mainEntry);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(output));
+
+        var export = await Cli("convert-equations", source, "--out", output, "--json");
+        Assert.True(export.Exit == 0, export.Out + export.Error);
+        var exported = JsonNode.Parse(export.Out)!;
+        Assert.True(exported["success"]!.GetValue<bool>());
+        Assert.True(exported["data"]!["fullyNative"]!.GetValue<bool>());
+        Assert.Equal(6, exported["data"]!["converted"]!.GetValue<int>());
+        Assert.Equal(4, Xml(output, mainEntry).Descendants(M + "oMath").Count());
+        Assert.Equal(original, File.ReadAllBytes(source));
+
+        var after = Entries(output);
+        Assert.Equal(before.Keys.Order(), after.Keys.Order());
+        string[] changed = [mainEntry, "word/header1.xml", "word/footer1.xml", "word/footnotes.xml"];
+        foreach (string name in before.Keys.Except(changed)) Assert.Equal(before[name], after[name]);
+        var validation = await Cli("validate", output, "--json");
+        Assert.True(validation.Exit == 0, validation.Out + validation.Error);
+    }
+
+    [Theory]
+    [InlineData("xml")]
+    [InlineData("native")]
+    public void MainPartCasingCannotBypassDocumentRootValidation(string extension)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("broken.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        ChangeMainXml(source, xml => xml.Root!.ReplaceWith(new XElement("notAWordDocument")));
+        ChangeMainPartCasing(source, extension, uppercaseEntry: false);
+        byte[] original = File.ReadAllBytes(source);
+        foreach (string? destination in new[] { null, output })
+        {
+            var exception = Assert.Throws<CliException>(() => MathTypeConverter.Convert(source, destination, true));
+            Assert.Equal("corrupt_file", exception.Code);
+            Assert.Equal("The main part must contain a Word document and one body.", exception.Message);
+            Assert.False(File.Exists(output));
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+    }
+
+    [Fact]
+    public void CaseOnlyDuplicatePartsRemainAmbiguousAndRejected()
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("ambiguous.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        byte[] main = Entries(source)["word/document.xml"];
+        using (var archive = ZipFile.Open(source, ZipArchiveMode.Update))
+        using (var stream = archive.CreateEntry("WORD/DOCUMENT.XML").Open()) stream.Write(main);
+        byte[] original = File.ReadAllBytes(source);
+        var exception = Assert.Throws<CliException>(() => MathTypeConverter.Convert(source, output, true));
+        Assert.Equal("corrupt_file", exception.Code);
+        Assert.Equal("Package has duplicate entry names.", exception.Message);
+        Assert.False(File.Exists(output));
+        Assert.Equal(original, File.ReadAllBytes(source));
     }
 
     [Theory]
@@ -404,13 +501,47 @@ public class MathTypeConversionTests
         }
     }
 
-    private static void ChangeMainXml(string path, Action<XDocument> change)
+    private static string ChangeMainPartCasing(string path, string extension, bool uppercaseEntry)
     {
-        var xml = Xml(path);
+        string partName = "word/document." + extension;
+        string entryName = uppercaseEntry ? partName.ToUpperInvariant() : partName;
+        string target = "/" + (uppercaseEntry ? partName : partName.ToUpperInvariant());
+        ChangeXmlPart(path, "_rels/.rels", xml => xml.Root!.Elements()
+            .Single(e => ((string?)e.Attribute("Type"))?.EndsWith("/officeDocument", StringComparison.Ordinal) == true)
+            .SetAttributeValue("Target", target));
+        if (extension != "xml")
+        {
+            // A Default keeps this fixture readable by the bundled Packaging
+            // version, independently of its separate content-type Override bug.
+            ChangeXmlPart(path, "[Content_Types].xml", xml => xml.Root!.Add(
+                new XElement(xml.Root.Name.Namespace + "Default", new XAttribute("Extension", extension),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"))));
+        }
+        RenameEntry(path, "word/document.xml", entryName);
+        RenameEntry(path, "word/_rels/document.xml.rels", "word/_rels/document." + extension + ".rels");
+        return entryName;
+    }
+
+    private static void RenameEntry(string path, string previousName, string name)
+    {
+        if (previousName == name) return;
+        byte[] bytes = Entries(path)[previousName];
+        using var archive = ZipFile.Open(path, ZipArchiveMode.Update);
+        archive.GetEntry(previousName)!.Delete();
+        using var stream = archive.CreateEntry(name).Open();
+        stream.Write(bytes);
+    }
+
+    private static void ChangeMainXml(string path, Action<XDocument> change) =>
+        ChangeXmlPart(path, "word/document.xml", change);
+
+    private static void ChangeXmlPart(string path, string partName, Action<XDocument> change)
+    {
+        var xml = Xml(path, partName);
         change(xml);
         using var archive = ZipFile.Open(path, ZipArchiveMode.Update);
-        archive.GetEntry("word/document.xml")!.Delete();
-        using var stream = archive.CreateEntry("word/document.xml").Open();
+        archive.GetEntry(partName)!.Delete();
+        using var stream = archive.CreateEntry(partName).Open();
         xml.Save(stream, SaveOptions.DisableFormatting);
     }
 

@@ -51,13 +51,14 @@ internal static class MathTypeConverter
         using var packageStream = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var package = Package.Open(packageStream, FileMode.Open, FileAccess.Read);
         string mainPart = CheckRelationships(package);
-        if (archive.GetEntry(mainPart) == null)
+        var mainEntry = archive.Entries.FirstOrDefault(e => e.FullName.Equals(mainPart, StringComparison.OrdinalIgnoreCase));
+        if (mainEntry == null)
             throw new CliException("The main document part is missing from the archive.") { Code = "corrupt_file" };
         var xmlPartNames = package.GetParts()
             .Where(p => p.ContentType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
                 || p.ContentType.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
                 || p.ContentType.Equals("text/xml", StringComparison.OrdinalIgnoreCase))
-            .Select(p => p.Uri.OriginalString.TrimStart('/')).ToHashSet(StringComparer.Ordinal);
+            .Select(p => p.Uri.OriginalString.TrimStart('/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var records = new JsonArray();
         var warnings = new JsonArray();
@@ -68,7 +69,7 @@ internal static class MathTypeConverter
         foreach (var entry in archive.Entries.Where(e => xmlPartNames.Contains(e.FullName) || e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)))
         {
             var xml = ReadXml(entry);
-            if (entry.FullName == mainPart && (xml.Root?.Name != W + "document" || xml.Root.Elements(W + "body").Count() != 1))
+            if (ReferenceEquals(entry, mainEntry) && (xml.Root?.Name != W + "document" || xml.Root.Elements(W + "body").Count() != 1))
                 throw new CliException("The main part must contain a Word document and one body.") { Code = "corrupt_file" };
             existingNative += xml.Descendants(M + "oMath").Count();
             var objects = xml.Descendants(O + "OLEObject").ToList();
