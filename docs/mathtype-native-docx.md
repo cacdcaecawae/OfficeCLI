@@ -64,9 +64,11 @@ The input is opened read-only. Export copies untouched ZIP entry contents byte-f
 
 All fixtures are generated in tests from synthetic mathematical records and neutral text. No user document, extracted equation payload or proprietary MathType program is distributed.
 
+Fork builds use `1.0.146-paperai.1` for both managed tests and native publishing. Keep the `<upstream>-paperai.<revision>` format: the fork's fixed-version update protection recognizes `-paperai.`, so feature names belong in artifact labels, not in that suffix. The MathType workflow shares one `PAPERAI_VERSION` across all builds and checks the published executable's `--version` before running its tests.
+
 ```sh
-dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release
-dotnet publish src/officecli/officecli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=1.0.146-paperai-mathtype.1 -o .artifacts/native
+dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release -p:Version=1.0.146-paperai.1
+dotnet publish src/officecli/officecli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=1.0.146-paperai.1 -o .artifacts/native
 ```
 
 For Windows executable tests and synthetic reviewer artifacts (use a new, empty artifact directory):
@@ -74,10 +76,13 @@ For Windows executable tests and synthetic reviewer artifacts (use a new, empty 
 ```powershell
 $env:OFFICECLI_TEST_BINARY = (Resolve-Path .artifacts/native/officecli.exe).Path
 $env:OFFICECLI_MATHTYPE_ARTIFACTS = Join-Path $PWD '.artifacts/synthetic'
-dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release
+& $env:OFFICECLI_TEST_BINARY --version # Must report 1.0.146-paperai.1.
+dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release -p:Version=1.0.146-paperai.1
 ```
 
 The suite checks operand ordering, OMML schema validity, corruption/unknown-feature rejection, CLI JSON and exits, mixed-content preservation, HTML formulas, and normalized OMML equality after changing adjacent text with `WordHandler` and saving. CI runs the tests on Windows, Linux and macOS and additionally tests the trimmed Windows x64 executable. No Release or npm publish is performed by this workflow.
+
+When combined with the fork's release/update-protection changes, the same unfiltered suite also runs `PinnedForkTests`: staged updates must remain untouched, `config autoUpdate` must report `false`, enabling it must fail, and `__update-check__` must be a no-op. Keep `OFFICECLI_TEST_BINARY` pointed at the published executable and pass the same `Version` to `dotnet test`; testing only the default managed build does not verify the native artifact's protection. The MathType conversion changes alone do not implement update protection.
 
 OPC name regressions use synthetic documents that the SDK first opens and validates. They exercise uppercase/lowercase relationship targets and ZIP names, XML parts without an `.xml` extension, dry-run and export counts, unchanged input/untouched part bytes, output validation, invalid document roots, and case-only duplicate parts. Run them with `dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --filter 'FullyQualifiedName~MainPartCasing|FullyQualifiedName~XmlContentTypeFinds|FullyQualifiedName~CaseOnlyDuplicate'`.
 
