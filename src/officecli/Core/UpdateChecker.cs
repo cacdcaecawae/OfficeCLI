@@ -22,6 +22,12 @@ namespace OfficeCli.Core;
 /// </summary>
 internal static class UpdateChecker
 {
+    /// <summary>PaperAI artifacts are upgraded only by replacing their pinned
+    /// Release asset or npm tarball, never through the upstream self-updater.</summary>
+    internal static bool IsPinnedFork { get; } = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+        .InformationalVersion.Contains("-paperai.", StringComparison.Ordinal) == true;
+
     // Resolved per-call rather than cached so tests can override $HOME between
     // cases without restarting the process. Production behavior is unchanged —
     // $HOME never moves under a running officecli invocation.
@@ -45,6 +51,8 @@ internal static class UpdateChecker
     /// </summary>
     internal static void CheckInBackground()
     {
+        if (IsPinnedFork) return;
+
         // Best-effort: SaveConfig falls back to $TMPDIR inside containers when
         // home is read-only, so a CreateDirectory failure here is not fatal.
         try { Directory.CreateDirectory(ConfigDir); } catch { /* continue */ }
@@ -102,6 +110,8 @@ internal static class UpdateChecker
     /// </summary>
     internal static void RunRefresh()
     {
+        if (IsPinnedFork) return;
+
         try
         {
             var config = LoadConfig();
@@ -304,6 +314,8 @@ internal static class UpdateChecker
     /// </summary>
     internal static bool TryApplyPendingUpdate(string exePath)
     {
+        if (IsPinnedFork) return false;
+
         try
         {
             var updatePath = exePath + ".update";
@@ -449,6 +461,21 @@ internal static class UpdateChecker
     {
         const string available = "autoUpdate, log, log clear";
         var key = args[0].ToLowerInvariant();
+        if (IsPinnedFork && key == "autoupdate")
+        {
+            // Do not overwrite the shared upstream configuration for a setting
+            // that cannot enable self-replacement of this pinned artifact.
+            if (args.Length == 1)
+                Console.WriteLine("false");
+            else if (ParseHelpers.IsTruthy(args[1]))
+            {
+                Console.Error.WriteLine("Automatic updates are disabled for pinned PaperAI builds. Upgrade using a reviewed Release asset or npm tarball.");
+                return 1;
+            }
+            else
+                Console.WriteLine($"{args[0]} = false");
+            return 0;
+        }
         var config = LoadConfig();
 
         // officecli config log clear

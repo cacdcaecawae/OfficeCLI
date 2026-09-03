@@ -22,6 +22,12 @@ requires the selected asset to appear exactly once, and verifies SHA-256 before
 using the binary. It never falls back to `d.officecli.ai` or the upstream
 `iOfficeAI/OfficeCLI` repository.
 
+The PaperAI native binary disables automatic global installation and its
+upstream self-updater, including previously staged `.update` files. No global
+OfficeCLI or per-machine update setting is required. `config autoUpdate`
+reports `false`, and enabling it is rejected. Upgrade only by selecting a
+reviewed fork Release tarball and updating the lockfile URL and integrity.
+
 ## Usage
 
 ```bash

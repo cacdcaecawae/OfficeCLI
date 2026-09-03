@@ -208,30 +208,17 @@ officecli add deck.pptx / --type slide --prop title="Q4 Report"
 
 Ships as a single self-contained binary. The .NET runtime is embedded -- nothing to install, no runtime to manage.
 
-**One-line install:**
+**Install the PaperAI fork from a reviewed Release tarball:**
 
 ```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+npm install --save-exact \
+  https://github.com/cacdcaecawae/OfficeCLI/releases/download/v1.0.146-paperai.1/officecli-officecli-1.0.146-paperai.1.tgz
+npx --no-install officecli --version
 ```
 
-**Or via a package manager:**
+The example URL requires that fork Release to have been published. Pin the URL and lockfile integrity; no global installation or npm registry publication is required. Homebrew, Scoop, the npm registry package and the upstream install scripts distribute upstream OfficeCLI, not this patched fork. See [the npm wrapper documentation](npm/README.md) for checksum verification and supported platforms.
 
-```bash
-# Homebrew (macOS / Linux)
-brew install officecli
-
-# Scoop (Windows)
-scoop install officecli
-
-# npm (all platforms — fetches the native binary for your platform)
-npm install -g @officecli/officecli
-```
-
-**Or download manually** from [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases):
+**Or download manually** from the reviewed [PaperAI fork Releases](https://github.com/cacdcaecawae/OfficeCLI/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -244,14 +231,14 @@ npm install -g @officecli/officecli
 
 Verify installation: `officecli --version`
 
-**Or self-install from a downloaded binary (or run bare `officecli` to auto-install):**
+**Optional explicit installation of a downloaded fork binary:**
 
 ```bash
 officecli install    # explicit
-officecli            # bare invocation also triggers install
+officecli            # show help; no automatic global installation
 ```
 
-Updates are checked automatically in the background. Disable with `officecli config autoUpdate false` or skip per-invocation with `OFFICECLI_SKIP_UPDATE=1`. Configuration lives under `~/.officecli/config.json`.
+PaperAI's npm wrapper provides the `officecli` bin without this optional global installation. Builds whose version contains `-paperai.` disable automatic installation, background updates (including automatic skill refresh), and application of staged `.update` files. `config autoUpdate` reports `false`; enabling it is rejected without changing shared upstream settings. Upgrade by selecting a reviewed, immutable fork Release asset or npm tarball and updating the lockfile integrity. The upstream self-updater must not replace the patched binary or cross into another release channel. Other configuration lives under `~/.officecli/config.json`.
 
 ## Key Features
 
