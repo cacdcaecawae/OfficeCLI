@@ -29,6 +29,9 @@ internal static class MathTypeTestData
     internal static byte[] Equation(params byte[][] items) => Raw(true, Line(items));
     internal static byte[] Power => Join(Character('x'), Template(28, 0, NullLine, Line(Character('2', 8))));
     internal static byte[] Fraction => Template(11, 0, Line(Power), Line(Text("y+1")));
+    internal static byte[] NestedSums => Template(16, 0x70,
+        Line(Template(16, 0x70, Line(Text("p+q")), Line(Text("b=3")), Line(Text("B")), Character('∑'))),
+        Line(Text("a=2")), Line(Text("A")), Character('∑'));
 
     internal static byte[] Ole(byte[] mtef)
     {

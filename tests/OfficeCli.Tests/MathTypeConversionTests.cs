@@ -338,6 +338,55 @@ public class MathTypeConversionTests
     }
 
     [Fact]
+    public async Task CliSummationLimitsSurviveExportPreviewAndAdjacentTextEdit()
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("summation-source.docx"), output = dir.File("summation-native.docx"), html = dir.File("summation-preview.html");
+        CreateDocument(source, Equation(NestedSums));
+        byte[] original = File.ReadAllBytes(source);
+        var inspect = await Cli("convert-equations", source, "--dry-run", "--json");
+        Assert.Equal(0, inspect.Exit);
+        var inspected = JsonNode.Parse(inspect.Out)!;
+        Assert.True(inspected["success"]!.GetValue<bool>());
+        var math = XElement.Parse(inspected["data"]!["results"]![0]!["omml"]!.GetValue<string>());
+        Assert.Equal(["a=2", "b=3"], math.Descendants(M + "nary").Select(n => n.Element(M + "sub")!.Value));
+        Assert.Equal(["A", "B"], math.Descendants(M + "nary").Select(n => n.Element(M + "sup")!.Value));
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.Single(Directory.GetFiles(dir.Path));
+
+        var export = await Cli("convert-equations", source, "--out", output, "--json");
+        Assert.Equal(0, export.Exit);
+        Assert.True(JsonNode.Parse(export.Out)!["data"]!["fullyNative"]!.GetValue<bool>());
+        var sums = Xml(output).Descendants(M + "nary").ToArray();
+        Assert.Equal(["a=2", "b=3"], sums.Select(n => n.Element(M + "sub")!.Value));
+        Assert.Equal(["A", "B"], sums.Select(n => n.Element(M + "sup")!.Value));
+        string[] before = NormalizedOmml(output);
+        using (var handler = new WordHandler(output, editable: true))
+        {
+            handler.Set("/body/p[1]/r[1]", new Dictionary<string, string> { ["text"] = "Changed text " });
+            handler.Save();
+        }
+        Assert.Equal(before, NormalizedOmml(output));
+        Assert.Equal(original, File.ReadAllBytes(source));
+        var validation = await Cli("validate", output, "--json");
+        Assert.True(validation.Exit == 0, validation.Out + validation.Error);
+        var preview = await Cli("view", output, "html", "-o", html);
+        Assert.True(preview.Exit == 0, preview.Out + preview.Error);
+        string rendered = File.ReadAllText(html);
+        Assert.Contains("data-formula=", rendered);
+        Assert.DoesNotContain("data-formula=\"\"", rendered);
+        Assert.Contains("Changed text", rendered);
+
+        if (Environment.GetEnvironmentVariable("OFFICECLI_MATHTYPE_ARTIFACTS") is { Length: > 0 } artifactDirectory)
+        {
+            Directory.CreateDirectory(artifactDirectory);
+            File.Copy(source, Path.Combine(artifactDirectory, "summation-source-synthetic.docx"), overwrite: false);
+            File.Copy(output, Path.Combine(artifactDirectory, "summation-native-synthetic.docx"), overwrite: false);
+            File.Copy(html, Path.Combine(artifactDirectory, "summation-native-preview.html"), overwrite: false);
+        }
+    }
+
+    [Fact]
     public async Task CliFailuresHaveJsonAndNonzeroExitCodes()
     {
         using var dir = new MathTypeTestDirectory();

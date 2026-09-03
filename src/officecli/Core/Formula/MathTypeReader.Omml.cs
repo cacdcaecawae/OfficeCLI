@@ -191,9 +191,11 @@ internal sealed partial class MathTypeReader
     private XElement Nary(Node node, int depth)
     {
         // MathType 7 also stores limit-presence bits at 0x10/0x20. The explicit
-        // upper/lower slots carry the content; neither encoding may discard one.
+        // slots remain body, lower limit, upper limit, operator glyph.
         Variants(node, node.Selector == 15 ? 0x17f : 0x73);
         Slots(node, 3, 1);
+        var lowerLimit = node.Children[1];
+        var upperLimit = node.Children[2];
         string glyph = Glyph(node.Children[3]);
         string accepted = node.Selector switch
         {
@@ -204,9 +206,9 @@ internal sealed partial class MathTypeReader
         return Element("nary", Element("naryPr", Value("chr", glyph),
                 Value("limLoc", (node.Variation & 0x40) != 0 ? "undOvr" : "subSup"),
                 Value("grow", node.Selector != 15 || (node.Variation & 0x100) != 0 ? "1" : "0"),
-                Value("subHide", node.Children[2].Null ? "1" : "0"),
-                Value("supHide", node.Children[1].Null ? "1" : "0")),
-            Slot("sub", node.Children[2], depth), Slot("sup", node.Children[1], depth), Slot("e", node.Children[0], depth));
+                Value("subHide", lowerLimit.Null ? "1" : "0"),
+                Value("supHide", upperLimit.Null ? "1" : "0")),
+            Slot("sub", lowerLimit, depth), Slot("sup", upperLimit, depth), Slot("e", node.Children[0], depth));
     }
 
     private XElement Embellish(XElement basis, int code)

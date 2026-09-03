@@ -116,11 +116,73 @@ public class MathTypeReaderTests
     [InlineData(22, '⨁', 0x40)]
     public void LargeOperatorsRetainBodyAndLimits(int selector, char glyph, int variation)
     {
-        var xml = Read(Template(selector, variation, Line(Character('x')), Line(Character('n')), Line(Text("i=0")), Character(glyph)));
+        var xml = Read(Template(selector, variation, Line(Character('x')), Line(Text("i=0")), Line(Character('n')), Character(glyph)));
         var nary = Assert.Single(xml.Elements(M + "nary"));
         Assert.Equal("x", nary.Element(M + "e")!.Value);
         Assert.Equal("n", nary.Element(M + "sup")!.Value);
         Assert.Equal("i=0", nary.Element(M + "sub")!.Value);
+    }
+
+    [Fact]
+    public void NestedMathType7SummationsKeepLowerAndUpperLimits()
+    {
+        var xml = Read(NestedSums);
+        var sums = xml.Descendants(M + "nary").ToArray();
+        Assert.Equal(2, sums.Length);
+        Assert.Equal(["a=2", "b=3"], sums.Select(n => n.Element(M + "sub")!.Value));
+        Assert.Equal(["A", "B"], sums.Select(n => n.Element(M + "sup")!.Value));
+        Assert.Equal("p+q", sums[1].Element(M + "e")!.Value);
+    }
+
+    [Theory]
+    [InlineData(15, '∫')]
+    [InlineData(16, '∑')]
+    [InlineData(17, '∏')]
+    [InlineData(18, '∐')]
+    [InlineData(19, '⋃')]
+    [InlineData(20, '⋂')]
+    [InlineData(21, '⨂')]
+    [InlineData(22, '⨁')]
+    public void LargeOperatorLimitVisibilityFollowsTheCorrespondingSlot(int selector, char glyph)
+    {
+        for (int limits = 0; limits < 4; limits++)
+        foreach (int position in new[] { 0, 0x40 })
+        {
+            bool hasLower = (limits & 1) != 0, hasUpper = (limits & 2) != 0;
+            int variation = (limits << 4) | position | (selector == 15 ? 1 : 0);
+            var xml = Read(Template(selector, variation, Line(Character('x')),
+                hasLower ? Line(Text("a")) : NullLine,
+                hasUpper ? Line(Text("b")) : NullLine, Character(glyph)));
+            var nary = Assert.Single(xml.Elements(M + "nary"));
+            Assert.Equal(hasLower ? "a" : "", nary.Element(M + "sub")!.Value);
+            Assert.Equal(hasUpper ? "b" : "", nary.Element(M + "sup")!.Value);
+            var properties = nary.Element(M + "naryPr")!;
+            Assert.Equal(hasLower ? "0" : "1", properties.Element(M + "subHide")!.Attribute(M + "val")!.Value);
+            Assert.Equal(hasUpper ? "0" : "1", properties.Element(M + "supHide")!.Attribute(M + "val")!.Value);
+            Assert.Equal(position == 0 ? "subSup" : "undOvr", properties.Element(M + "limLoc")!.Attribute(M + "val")!.Value);
+        }
+    }
+
+    [Theory]
+    [InlineData(15, '∫', 0x31)]
+    [InlineData(16, '∑', 0x70)]
+    public void LimitValuesDoNotDetermineTheirPositions(int selector, char glyph, int variation)
+    {
+        var xml = Read(Template(selector, variation, Line(Character('x')), Line(Text("9")), Line(Text("1")), Character(glyph)));
+        var nary = Assert.Single(xml.Elements(M + "nary"));
+        Assert.Equal("9", nary.Element(M + "sub")!.Value);
+        Assert.Equal("1", nary.Element(M + "sup")!.Value);
+    }
+
+    [Fact]
+    public void MalformedLargeOperatorsAndUnknownVariationsRemainRejected()
+    {
+        Assert.Equal("invalid_mtef", Assert.Throws<MathTypeException>(() => Read(
+            Template(16, 0x70, Line(Character('x')), Line(Text("a")), Character('∑')))).Code);
+        Assert.Equal("invalid_mtef", Assert.Throws<MathTypeException>(() => Read(
+            Template(16, 0x70, Line(Character('x')), Character('a'), Line(Text("b")), Character('∑')))).Code);
+        Assert.Equal("unsupported_mtef", Assert.Throws<MathTypeException>(() => Read(
+            Template(16, 0x100, Line(Character('x')), Line(Text("a")), Line(Text("b")), Character('∑')))).Code);
     }
 
     [Fact]
