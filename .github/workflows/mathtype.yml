@@ -1,0 +1,54 @@
+name: MathType native DOCX
+
+on:
+  pull_request:
+    paths:
+      - 'src/officecli/**'
+      - 'tests/OfficeCli.Tests/**'
+      - '.github/workflows/mathtype.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/officecli/**'
+      - 'tests/OfficeCli.Tests/**'
+      - '.github/workflows/mathtype.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Read, convert, validate, preview and preserve equations
+        run: dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --nologo
+
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish trimmed Windows x64 executable
+        run: dotnet publish src/officecli/officecli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=1.0.146-paperai-mathtype.1 -o .artifacts/native --nologo
+      - name: Exercise the executable without a global OfficeCLI installation
+        shell: pwsh
+        run: |
+          $env:OFFICECLI_TEST_BINARY = Join-Path $PWD '.artifacts/native/officecli.exe'
+          $env:OFFICECLI_MATHTYPE_ARTIFACTS = Join-Path $PWD '.artifacts/synthetic'
+          dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --nologo
+      - uses: actions/upload-artifact@v6
+        with:
+          name: mathtype-synthetic-native-docx
+          path: .artifacts/synthetic/
+          if-no-files-found: error

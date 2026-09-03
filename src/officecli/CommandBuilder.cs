@@ -190,6 +190,7 @@ static partial class CommandBuilder
         rootCommand.Add(BuildBatchCommand(jsonOption));
         rootCommand.Add(BuildDumpCommand(jsonOption));
         rootCommand.Add(BuildImportCommand(jsonOption));
+        rootCommand.Add(BuildConvertEquationsCommand(jsonOption));
         rootCommand.Add(BuildCreateCommand(jsonOption));
         rootCommand.Add(BuildMergeCommand(jsonOption));
         rootCommand.Add(BuildPluginsCommand(jsonOption));
