@@ -18,6 +18,8 @@ static partial class CommandBuilder
         var importSourceOpt = new Option<FileInfo?>("--file") { Description = "Source CSV/TSV file to import" };
         var importStdinOpt = new Option<bool>("--stdin") { Description = "Read CSV/TSV data from stdin" };
         var importFormatOpt = new Option<string?>("--format") { Description = "Data format: csv or tsv (default: inferred from file extension, or csv)" };
+        var importDelimiterOpt = new Option<string?>("--delimiter") { Description = "Field separator, one character — overrides --format and the file extension. For a CSV that is not comma-separated, e.g. the ';' files Excel exports in de-DE / ru-RU and other non-US locales. Takes a literal character (';', '|') or the escape '\\t' / 'tab'. A quote or newline is refused: the CSV reader gives those its own meaning." };
+        var importDecimalOpt = new Option<string?>("--decimal") { Description = "Decimal mark the SOURCE file uses: '.' (default) or ','. Declaring ',' also makes '.' the thousands group, so \"1.234,5\" imports as 1234.5 and \"1,5\" as 1.5. Without it a decimal comma is left as text rather than guessed at — \"1,234\" is 1234 under one convention and 1.234 under the other. Usually paired with --delimiter ';', since a locale that writes 1,5 needs a non-comma separator." };
         var importHeaderOpt = new Option<bool>("--header") { Description = "First row is header: set AutoFilter and freeze pane" };
         var importStartCellOpt = new Option<string>("--start-cell") { Description = "Starting cell (default: A1)" };
         importStartCellOpt.DefaultValueFactory = _ => "A1";
@@ -29,6 +31,8 @@ static partial class CommandBuilder
         importCommand.Add(importSourceOpt);
         importCommand.Add(importStdinOpt);
         importCommand.Add(importFormatOpt);
+        importCommand.Add(importDelimiterOpt);
+        importCommand.Add(importDecimalOpt);
         importCommand.Add(importHeaderOpt);
         importCommand.Add(importStartCellOpt);
         importCommand.Add(jsonOption);
@@ -40,6 +44,8 @@ static partial class CommandBuilder
             var source = result.GetValue(importSourceOpt) ?? result.GetValue(importSourceArg);
             var useStdin = result.GetValue(importStdinOpt);
             var format = result.GetValue(importFormatOpt);
+            var delimiterOpt = result.GetValue(importDelimiterOpt);
+            var decimalOpt = result.GetValue(importDecimalOpt);
             var header = result.GetValue(importHeaderOpt);
             var startCell = result.GetValue(importStartCellOpt)!;
 
@@ -87,9 +93,13 @@ static partial class CommandBuilder
                 };
             }
 
-            // Determine delimiter: --format flag > file extension > default csv
+            // Determine delimiter: --delimiter > --format flag > file extension > default csv
             char delimiter = ',';
-            if (!string.IsNullOrEmpty(format))
+            if (!string.IsNullOrEmpty(delimiterOpt))
+            {
+                delimiter = ParseImportDelimiter(delimiterOpt);
+            }
+            else if (!string.IsNullOrEmpty(format))
             {
                 delimiter = format.ToLowerInvariant() switch
                 {
@@ -109,10 +119,14 @@ static partial class CommandBuilder
                     delimiter = '\t';
             }
 
+            var decimalSeparator = ParseImportDecimal(decimalOpt, delimiter);
+            if (LikelyWrongDelimiterWarning(csvContent, delimiter) is { } delimWarn)
+                Console.Error.WriteLine(delimWarn);
+
             // Release any running resident's file lock before direct-open (import bypasses resident)
             ResidentClient.SendClose(file.FullName);
             using var handler = new OfficeCli.Handlers.ExcelHandler(file.FullName, editable: true);
-            var msg = handler.Import(parentPath, csvContent, delimiter, header, startCell);
+            var msg = handler.Import(parentPath, csvContent, delimiter, header, startCell, decimalSeparator);
             if (json)
                 Console.WriteLine(OutputFormatter.WrapEnvelopeText(msg));
             else
@@ -121,6 +135,75 @@ static partial class CommandBuilder
         }, json); });
 
         return importCommand;
+    }
+
+    /// <summary>
+    /// One character, or the escape <c>\t</c> / <c>tab</c> for a tab. Quote and
+    /// newline are refused because ExcelHandler.ParseCsv gives them structural
+    /// meaning — a '"' opens a quoted field and '\r' / '\n' end a row — so a
+    /// delimiter of either would fight the branch that handles it. Every other
+    /// character is compared only outside quotes, so it is safe.
+    /// </summary>
+    internal static char ParseImportDelimiter(string raw)
+    {
+        var value = raw switch
+        {
+            "\\t" or "tab" or "TAB" or "\t" => "\t",
+            _ => raw,
+        };
+        if (value.Length != 1)
+            throw new CliException(
+                $"--delimiter must be a single character, got '{raw}' ({value.Length} chars). "
+                + "Use a literal separator like ';' or '|', or the escape '\\t' for a tab.")
+            { Code = "invalid_value" };
+        var c = value[0];
+        if (c is '"' or '\n' or '\r')
+            throw new CliException(
+                "--delimiter cannot be a quote or a newline: the CSV reader uses those for "
+                + "quoted fields and row breaks.")
+            { Code = "invalid_value" };
+        return c;
+    }
+
+    /// <summary>
+    /// '.' (default) or ','. Refuses a decimal mark equal to the field
+    /// separator, which would make every row ambiguous.
+    /// </summary>
+    internal static char ParseImportDecimal(string? raw, char delimiter)
+    {
+        if (string.IsNullOrEmpty(raw)) return '.';
+        if (raw.Length != 1 || (raw[0] != '.' && raw[0] != ','))
+            throw new CliException($"--decimal must be '.' or ',', got '{raw}'.")
+            { Code = "invalid_value", ValidValues = [".", ","] };
+        if (raw[0] == delimiter)
+            throw new CliException(
+                $"--decimal '{raw}' is also the field separator, so every row would be ambiguous. "
+                + "A file with decimal commas needs a different separator, e.g. --delimiter ';'.")
+            { Code = "invalid_value" };
+        return raw[0];
+    }
+
+    /// <summary>
+    /// A CSV whose separator is not the one we are about to split on imports as
+    /// one fat column and reports "Imported N rows x 1 cols" — success-shaped
+    /// output over wrong structure (issue #352). Say so when the first line has
+    /// none of the chosen separator but does carry a common alternative. The
+    /// import still runs: a genuine one-column file is legal.
+    /// </summary>
+    internal static string? LikelyWrongDelimiterWarning(string content, char delimiter)
+    {
+        var firstLine = content.Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l));
+        if (firstLine == null || firstLine.Contains(delimiter)) return null;
+
+        static string Show(char c) => c == '\t' ? "\\t" : c.ToString();
+        foreach (var candidate in new[] { ';', '\t', '|' })
+        {
+            if (candidate == delimiter || !firstLine.Contains(candidate)) continue;
+            return $"Warning: the first line contains no '{Show(delimiter)}' but does contain "
+                + $"'{Show(candidate)}' — the file may be {Show(candidate)}-separated and will "
+                + $"import as a single column. Pass --delimiter '{Show(candidate)}' if so.";
+        }
+        return null;
     }
 
     private static Command BuildCreateCommand(Option<bool> jsonOption)

@@ -1,5 +1,10 @@
 # OfficeCLI
 
+> **PaperAI fork notice:** `1.0.146-paperai.1` is based on upstream
+> [`v1.0.146`](https://github.com/iOfficeAI/OfficeCLI/releases/tag/v1.0.146) and
+> adds Office-compatible DOCX validation plus fork-pinned GitHub Release/npm
+> delivery. It is not an official upstream release.
+
 > **OfficeCLI is the world's first and the best Office suite designed for AI agents.**
 
 **Give any AI agent full control over Word, Excel, and PowerPoint — in one line of code.**
@@ -8,7 +13,7 @@ Open-source. Single binary. No Office installation. No dependencies. Works every
 
 **OfficeCLI's built-in HTML rendering engine reproduces documents with high fidelity — and that's what gives AI eyes.** It renders `.docx` / `.xlsx` / `.pptx` to HTML or PNG, closing the *render → look → fix* loop.
 
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![PaperAI Fork Release](https://img.shields.io/github/v/release/cacdcaecawae/OfficeCLI?label=PaperAI%20fork)](https://github.com/cacdcaecawae/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md)
@@ -203,30 +208,17 @@ officecli add deck.pptx / --type slide --prop title="Q4 Report"
 
 Ships as a single self-contained binary. The .NET runtime is embedded -- nothing to install, no runtime to manage.
 
-**One-line install:**
+**Install the PaperAI fork from a reviewed Release tarball:**
 
 ```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+npm install --save-exact \
+  https://github.com/cacdcaecawae/OfficeCLI/releases/download/v1.0.146-paperai.1/officecli-officecli-1.0.146-paperai.1.tgz
+npx --no-install officecli --version
 ```
 
-**Or via a package manager:**
+The example URL requires that fork Release to have been published. Pin the URL and lockfile integrity; no global installation or npm registry publication is required. Homebrew, Scoop, the npm registry package and the upstream install scripts distribute upstream OfficeCLI, not this patched fork. See [the npm wrapper documentation](npm/README.md) for checksum verification and supported platforms.
 
-```bash
-# Homebrew (macOS / Linux)
-brew install officecli
-
-# Scoop (Windows)
-scoop install officecli
-
-# npm (all platforms — fetches the native binary for your platform)
-npm install -g @officecli/officecli
-```
-
-**Or download manually** from [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases):
+**Or download manually** from the reviewed [PaperAI fork Releases](https://github.com/cacdcaecawae/OfficeCLI/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -239,14 +231,14 @@ npm install -g @officecli/officecli
 
 Verify installation: `officecli --version`
 
-**Or self-install from a downloaded binary (or run bare `officecli` to auto-install):**
+**Optional explicit installation of a downloaded fork binary:**
 
 ```bash
 officecli install    # explicit
-officecli            # bare invocation also triggers install
+officecli            # show help; no automatic global installation
 ```
 
-Updates are checked automatically in the background. Disable with `officecli config autoUpdate false` or skip per-invocation with `OFFICECLI_SKIP_UPDATE=1`. Configuration lives under `~/.officecli/config.json`.
+PaperAI's npm wrapper provides the `officecli` bin without this optional global installation. Builds whose version contains `-paperai.` disable automatic installation, background updates (including automatic skill refresh), and application of staged `.update` files. `config autoUpdate` reports `false`; enabling it is rejected without changing shared upstream settings. Upgrade by selecting a reviewed, immutable fork Release asset or npm tarball and updating the lockfile integrity. The upstream self-updater must not replace the patched binary or cross into another release channel. Other configuration lives under `~/.officecli/config.json`.
 
 ## Key Features
 
@@ -540,6 +532,26 @@ PaperAI fork: [`convert-equations`](docs/mathtype-native-docx.md) reads supporte
 | [`install`](https://github.com/iOfficeAI/OfficeCLI/wiki/command-install) | Install binary + skills + MCP (`all`, `claude`, `cursor`, etc.) |
 | `config` | Get or set configuration |
 | `help <format> <command>` | [Built-in help](https://github.com/iOfficeAI/OfficeCLI/wiki/command-reference) (e.g. `officecli help pptx set shape`) |
+
+### Validation profiles
+
+`validate` is read-only and defaults to the upstream-compatible strict verdict:
+
+```bash
+officecli validate report.docx --profile strict --json
+officecli validate report.docx --profile office-compatible --json
+```
+
+`strict` treats every reported Open XML SDK schema diagnostic as an error. `office-compatible` changes only four proven Word/WPS sibling-order variants into warnings: `m:scr` immediately after `m:sty`, `m:limLoc` immediately after `m:grow`, `m:plcHide` immediately after `m:mcs` in `/word/document.xml`, and `w:uiPriority` immediately after `w:qFormat` in `/word/styles.xml`. The part, namespace, parent, child, and immediate predecessor must all match.
+
+Before downgrading a diagnostic, validation deep-copies the containing XML part in memory and moves only the known child into its strict position. It revalidates from the copied root so the parent subtree retains inherited namespace declarations and markup-compatibility rules such as `mc:Ignorable` and `mc:ProcessContent`. For `w:uiPriority`, the strict position also precedes any `w:semiHidden` and `w:unhideWhenUsed` flags before `w:qFormat`. Any remaining duplicate, illegal element, or invalid value in the affected subtree, or a validator failure, keeps the original diagnostic blocking. Diagnostics elsewhere in the document remain in the original full-document validation result. The source document is never reordered or saved by this check. Malformed XML, missing relationships/resources, and illegal formula structure remain errors; ignorable extensions use the SDK's existing markup-compatibility semantics, not an additional OfficeCLI exemption.
+
+JSON output keeps every diagnostic under `data.diagnostics`. `data.errors` and `data.warnings` are severity-specific views of the same entries; each entry has `type`, `description`, optional `path`/`part`, `severity`, `classification`, and `reason`. `data.profile`, `errorCount`, and `warningCount` state the applied verdict; `count` remains an alias for `errorCount`. The top-level `success` is true exactly when `errorCount` is zero.
+
+| Result | Exit code |
+|--------|-----------|
+| No errors (including compatibility warnings under `office-compatible`) | `0` |
+| One or more blocking diagnostics, malformed input, or an invalid profile | `1` |
 
 ## End-to-End Workflow Example
 

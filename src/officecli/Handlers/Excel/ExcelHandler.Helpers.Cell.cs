@@ -413,8 +413,9 @@ public partial class ExcelHandler
             || value.Equals("-Infinity", StringComparison.Ordinal)
             || value.Equals("+Infinity", StringComparison.Ordinal))
             return (1, 0.0, value);
-        if (double.TryParse(value, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out var num))
+        // Same numeric definition as storage and formulas: "1,5" is text, so it
+        // sorts with the strings instead of landing between 14 and 16.
+        if (Core.NumericText.TryParse(value, out var num))
         {
             // Defensive: even non-literal inputs can produce non-finite doubles
             // (e.g. "1e999" overflows to +Infinity). Keep those in the string bucket.

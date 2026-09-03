@@ -1,29 +1,26 @@
 'use strict';
 
-// Shared installer logic for the @officecli/officecli (and @aionui/officecli)
-// npm packages. The package itself ships no native code: on install it fetches
-// the platform binary from the SAME release mirror install.sh uses
-// (d.officecli.ai primary, GitHub releases fallback), pinned to the IMMUTABLE
-// versioned path so a freshly-published release never collides with a CDN-cached
-// `latest`. Asset names and the mirror/fallback order mirror install.sh exactly.
+// Installer for the PaperAI OfficeCLI fork. The package ships no native code:
+// it fetches the platform binary only from the matching immutable release in
+// cacdcaecawae/OfficeCLI. Do not add the upstream mirror as a fallback: it can
+// return a same-base-version binary without the PaperAI compatibility patch.
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 
-const REPO = 'iOfficeAI/OfficeCLI';
-const MIRROR_BASE = 'https://d.officecli.ai';
+const REPO = 'cacdcaecawae/OfficeCLI';
 const GITHUB_BASE = 'https://github.com/' + REPO;
 
 // The package version is set to the release version at publish time, so the
 // release tag we download from is derived directly from it (immutable, never
-// stale). A prerelease/build suffix (e.g. 1.0.122-test.1) maps to the same
-// binary release v1.0.122 — strip everything after the first '-' or '+'.
+// stale). Keep the prerelease suffix because v1.0.146 and
+// v1.0.146-paperai.1 are different binaries. Build metadata is not used in the
+// release tag.
 const VERSION = require('../package.json').version;
-const TAG = 'v' + VERSION.split('+')[0].split('-')[0];
+const TAG = 'v' + VERSION.split('+')[0];
 
 const PKG_ROOT = path.join(__dirname, '..');
 // Native binary lives under vendor/, NOT bin/: the repo's root .gitignore
@@ -89,17 +86,13 @@ function binaryPath() {
 }
 
 function assetUrls(asset) {
-  // Mirror first (issues surface fast), GitHub fallback — same order as
-  // install.sh. Both use the immutable /releases/download/<tag>/ path.
   return [
-    MIRROR_BASE + '/releases/download/' + TAG + '/' + asset,
     GITHUB_BASE + '/releases/download/' + TAG + '/' + asset
   ];
 }
 
 function sumsUrls() {
   return [
-    MIRROR_BASE + '/releases/download/' + TAG + '/SHA256SUMS',
     GITHUB_BASE + '/releases/download/' + TAG + '/SHA256SUMS'
   ];
 }
@@ -175,37 +168,36 @@ function fetchBuffer(url) {
   });
 }
 
-async function verifyChecksum(asset, file) {
-  let sums = null;
-  for (const url of sumsUrls()) {
-    try {
-      sums = (await fetchBuffer(url)).toString('utf8');
-      break;
-    } catch (_) { /* try next source */ }
-  }
-  if (!sums) {
-    log('  SHA256SUMS not available, skipping checksum verification.');
-    return;
-  }
+function verifyChecksumText(asset, file, sums) {
   // SHA256SUMS rows are "<hex>  <name>" (sha256sum text mode). Match the
-  // filename column EXACTLY (a leading '*' marks binary mode), never a
-  // substring — same rule as install.sh / the C# self-updater.
-  let expected = null;
+  // filename column exactly (a leading '*' marks binary mode), never a
+  // substring. Reject malformed or duplicate rows instead of guessing.
+  const matches = [];
   for (const line of sums.split('\n')) {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      const name = parts[1].replace(/^\*/, '');
-      if (name === asset) { expected = parts[0]; break; }
-    }
+    const match = /^([a-f0-9]{64})\s+\*?(.+?)\s*$/i.exec(line);
+    if (match && match[2] === asset) matches.push(match[1]);
   }
-  if (!expected) {
-    log('  ' + asset + ' not listed in SHA256SUMS, skipping verification.');
-    return;
+  if (matches.length !== 1) {
+    throw new Error(
+      asset + ' must appear exactly once in SHA256SUMS (found ' + matches.length + ')'
+    );
   }
+  const expected = matches[0];
   const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   if (actual.toLowerCase() !== expected.toLowerCase()) {
     throw new Error('Checksum mismatch for ' + asset + ' (expected ' + expected + ', got ' + actual + ')');
   }
+}
+
+async function verifyChecksum(asset, file) {
+  const url = sumsUrls()[0];
+  let sums;
+  try {
+    sums = (await fetchBuffer(url)).toString('utf8');
+  } catch (error) {
+    throw new Error('Could not download mandatory SHA256SUMS from ' + url + ': ' + error.message);
+  }
+  verifyChecksumText(asset, file, sums);
   log('  checksum verified.');
 }
 
@@ -233,6 +225,7 @@ async function ensureBinary() {
     } catch (e) {
       lastErr = e;
       try { fs.rmSync(dest, { force: true }); } catch (_) { /* ignore */ }
+      try { fs.rmSync(dest + '.download', { force: true }); } catch (_) { /* ignore */ }
       log('  failed: ' + e.message);
     }
   }
@@ -247,6 +240,11 @@ module.exports = {
   ensureBinary: ensureBinary,
   binaryPath: binaryPath,
   detectAsset: detectAsset,
+  assetUrls: assetUrls,
+  sumsUrls: sumsUrls,
+  verifyChecksumText: verifyChecksumText,
+  REPO: REPO,
+  GITHUB_BASE: GITHUB_BASE,
   VERSION: VERSION,
   TAG: TAG
 };

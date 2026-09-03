@@ -5,7 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>OfficeCli</RootNamespace>
     <AssemblyName>officecli</AssemblyName>
-    <Version>1.0.146</Version>
+    <Version>1.0.146-paperai.1</Version>
     <Authors>goworm</Authors>
     <Company>OfficeCLI</Company>
     <Copyright>Copyright © 2026 OfficeCLI (https://OfficeCLI.AI)</Copyright>
@@ -21,6 +21,7 @@
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
     <PackageReference Include="System.CommandLine" Version="3.0.0-preview.2.26159.112" />
+    <InternalsVisibleTo Include="OfficeCli.Tests" />
   </ItemGroup>
 
   <ItemGroup>

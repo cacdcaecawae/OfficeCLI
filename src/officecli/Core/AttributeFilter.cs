@@ -744,7 +744,7 @@ internal static class AttributeFilter
         // past ~7.9e28, which made `[Amount>1e200]` a no-match while
         // `[Amount=1e300]` still hit via the string-equality fallback —
         // wrong answers with no warning. Non-finite parses (1e999) stay null.
-        return double.TryParse(trimmed, NumberStyles.Any, CultureInfo.InvariantCulture, out var n)
+        return NumericText.TryParse(trimmed, out var n)
             && double.IsFinite(n) ? n : null;
     }
 

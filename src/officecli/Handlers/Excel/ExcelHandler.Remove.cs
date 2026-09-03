@@ -1230,7 +1230,10 @@ public partial class ExcelHandler
             refMapper: r => ShiftRowInRefDown(r, insertRow),
             formulaTextMapper: f => Core.FormulaRefShifter.Shift(
                 f, sheetName, sheetName, Core.FormulaShiftDirection.RowsDown, insertRow),
-            rowMarkerShift: m => m >= insertRow - 1 ? m + 1 : m,
+            // Drawing anchor markers need the same ceiling as refs: a shape whose
+            // TO marker already sits on the grid edge (R152 clamps it there) would
+            // otherwise be pushed to 1048577 and make Excel reject the file.
+            rowMarkerShift: m => m >= insertRow - 1 ? Math.Min(m + 1, ExcelMaxRow) : m,
             crossSheetFormulaMapper: (other, f) => Core.FormulaRefShifter.Shift(
                 f, other, sheetName, Core.FormulaShiftDirection.RowsDown, insertRow));
     }
@@ -1280,7 +1283,7 @@ public partial class ExcelHandler
             refMapper: r => ShiftColInRefRight(r, insertColIdx),
             formulaTextMapper: f => Core.FormulaRefShifter.Shift(
                 f, sheetName, sheetName, Core.FormulaShiftDirection.ColumnsRight, insertColIdx),
-            colMarkerShift: m => m >= insertColIdx - 1 ? m + 1 : m,
+            colMarkerShift: m => m >= insertColIdx - 1 ? Math.Min(m + 1, ExcelMaxCol) : m,
             crossSheetFormulaMapper: (other, f) => Core.FormulaRefShifter.Shift(
                 f, other, sheetName, Core.FormulaShiftDirection.ColumnsRight, insertColIdx));
 
@@ -1288,6 +1291,15 @@ public partial class ExcelHandler
         // the tableColumns list so count matches the ref width (else 0x800A03EC).
         SyncTableColumnsAfterColInsert(worksheet, insertColIdx);
     }
+
+    // Excel's grid ceiling. Every insert-direction shift clamps to it: a range
+    // that already reaches the last row/column keeps that endpoint instead of
+    // being pushed one past the grid. An out-of-grid ref still passes schema
+    // validation, but real Excel refuses to open the workbook (0x800A03EC), and
+    // the shift path is the only way to produce one — the input validators
+    // (ValidateRangeRef and friends) reject 1048577 / XFE on the way in.
+    private const int ExcelMaxRow = 1048576;
+    private const int ExcelMaxCol = 16384; // XFD
 
     private static string? ShiftRowInRefDown(string? refStr, int insertRow)
     {
@@ -1299,7 +1311,7 @@ public partial class ExcelHandler
             try
             {
                 var (col, row) = ParseCellReference(part);
-                shifted.Add(row >= insertRow ? $"{col}{row + 1}" : part);
+                shifted.Add(row >= insertRow ? $"{col}{Math.Min(row + 1, ExcelMaxRow)}" : part);
             }
             catch { shifted.Add(part); }
         }
@@ -1321,7 +1333,9 @@ public partial class ExcelHandler
             {
                 var (col, row) = ParseCellReference(part);
                 var colIdx = ColumnNameToIndex(col);
-                shifted.Add(colIdx >= insertColIdx ? $"{IndexToColumnName(colIdx + 1)}{row}" : part);
+                shifted.Add(colIdx >= insertColIdx
+                    ? $"{IndexToColumnName(Math.Min(colIdx + 1, ExcelMaxCol))}{row}"
+                    : part);
             }
             catch { shifted.Add(part); }
         }

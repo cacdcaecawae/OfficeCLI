@@ -18,8 +18,12 @@ public partial class ExcelHandler
     /// <param name="delimiter">Field delimiter: ',' for CSV, '\t' for TSV</param>
     /// <param name="hasHeader">If true, set AutoFilter and freeze pane on first row</param>
     /// <param name="startCell">Starting cell reference, e.g. "A1"</param>
+    /// <param name="decimalSeparator">Decimal mark the SOURCE uses: '.' (default)
+    /// or ',' for the de-DE / ru-RU spelling, where '.' becomes the thousands
+    /// group. Declared by the caller — never detected (see Core.NumericText).</param>
     /// <returns>Summary of rows/cols imported</returns>
-    public string Import(string parentPath, string csvContent, char delimiter, bool hasHeader, string startCell)
+    public string Import(string parentPath, string csvContent, char delimiter, bool hasHeader, string startCell,
+        char decimalSeparator = '.')
     {
         parentPath = NormalizeExcelPath(parentPath);
         parentPath = ResolveSheetIndexInPath(parentPath);
@@ -146,7 +150,7 @@ public partial class ExcelHandler
                     cell.CellValue = null;
                     cell.DataType = null;
                 }
-                if (SetCellValueWithTypeDetection(cell, fields[c], IsWorkbookDate1904()))
+                if (SetCellValueWithTypeDetection(cell, fields[c], IsWorkbookDate1904(), decimalSeparator))
                 {
                     // Date cell — apply a date number format so it shows as a
                     // date, not the raw serial. Mirrors Set/Add (numFmt yyyy-mm-dd).
@@ -253,7 +257,8 @@ public partial class ExcelHandler
     /// </summary>
     /// <returns>true when the value was stored as a DATE (serial number needing
     /// a date number format); false for every other type.</returns>
-    private static bool SetCellValueWithTypeDetection(Cell cell, string value, bool date1904)
+    private static bool SetCellValueWithTypeDetection(Cell cell, string value, bool date1904,
+        char decimalSeparator = '.')
     {
         // Empty
         if (string.IsNullOrEmpty(value))
@@ -280,8 +285,15 @@ public partial class ExcelHandler
             return false;
         }
 
-        // Number (integer or decimal)
-        if (double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var numVal)
+        // Number (integer or decimal). Which spellings count is Core.NumericText's
+        // call: by default "1,5" is NOT a number (AllowThousands would read it as
+        // 15, silently 10x-ing every decimal-comma value in a de-DE / ru-RU CSV);
+        // under a declared decimal comma it is rewritten to 1.5 instead.
+        string? numericText = decimalSeparator == ','
+            ? (Core.NumericText.TryRewriteCommaDecimal(value, out var rewritten) ? rewritten : null)
+            : (HasValidThousandsGrouping(value) ? value : null);
+        if (numericText != null
+            && double.TryParse(numericText, NumberStyles.Any, CultureInfo.InvariantCulture, out var numVal)
             && double.IsFinite(numVal)) // "Infinity"/"NaN" parse but have no OOXML numeric form — fall through to string
         {
             // Preserve the literal digits when the input is already a plain
@@ -291,7 +303,7 @@ public partial class ExcelHandler
             // would corrupt them. Normalization is kept for the non-canonical
             // spellings double.TryParse accepts (whitespace padding,
             // thousands separators, "Infinity"/"NaN").
-            cell.CellValue = new CellValue(NormalizeNumericCellText(value, numVal));
+            cell.CellValue = new CellValue(NormalizeNumericCellText(numericText, numVal));
             cell.DataType = null; // numeric is default
             return false;
         }

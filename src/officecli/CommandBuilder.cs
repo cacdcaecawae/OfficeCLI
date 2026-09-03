@@ -1116,9 +1116,15 @@ static partial class CommandBuilder
                 if (item.Text == null)
                     throw new ArgumentException("'import' command requires 'text' field with the CSV/TSV content.");
                 // CONSISTENCY(import-vocabulary): props mirror the standalone
-                // command's options — format=csv|tsv, header, start-cell.
+                // command's options — format=csv|tsv, delimiter, decimal, header,
+                // start-cell. Keep this list in step with CommandBuilder.Import.cs;
+                // a prop missing here is a silently different batch behaviour.
                 char importDelim = ',';
-                if (props.TryGetValue("format", out var importFmt) && !string.IsNullOrEmpty(importFmt))
+                if (props.TryGetValue("delimiter", out var importDelimRaw) && !string.IsNullOrEmpty(importDelimRaw))
+                {
+                    importDelim = ParseImportDelimiter(importDelimRaw);
+                }
+                else if (props.TryGetValue("format", out var importFmt) && !string.IsNullOrEmpty(importFmt))
                 {
                     importDelim = importFmt.ToLowerInvariant() switch
                     {
@@ -1134,7 +1140,11 @@ static partial class CommandBuilder
                     ? importSc
                     : props.TryGetValue("startcell", out var importSc2) && !string.IsNullOrEmpty(importSc2)
                         ? importSc2 : "A1";
-                return importXl.Import(importParent, item.Text, importDelim, importHeader, importStart);
+                var importDecimal = ParseImportDecimal(
+                    props.TryGetValue("decimal", out var importDec) ? importDec : null, importDelim);
+                if (LikelyWrongDelimiterWarning(item.Text, importDelim) is { } importWarn)
+                    Console.Error.WriteLine(importWarn);
+                return importXl.Import(importParent, item.Text, importDelim, importHeader, importStart, importDecimal);
             }
             case "remove":
             {
@@ -1454,22 +1464,45 @@ static partial class CommandBuilder
         }
     }
 
-    private static string FormatValidationErrors(List<ValidationError> errors)
+    internal static string FormatValidationReport(ValidationReport report)
     {
+        var errors = report.Diagnostics.Where(d => d.Severity == "error").ToList();
+        var warnings = report.Diagnostics.Where(d => d.Severity == "warning").ToList();
         var sb = new StringBuilder();
-        sb.Append("{\"count\":").Append(errors.Count).Append(",\"errors\":[");
-        for (int i = 0; i < errors.Count; i++)
-        {
-            if (i > 0) sb.Append(',');
-            var e = errors[i];
-            sb.Append("{\"type\":\"").Append(EscapeJson(e.ErrorType)).Append('"');
-            sb.Append(",\"description\":\"").Append(EscapeJson(e.Description)).Append('"');
-            if (e.Path != null) sb.Append(",\"path\":\"").Append(EscapeJson(e.Path)).Append('"');
-            if (e.Part != null) sb.Append(",\"part\":\"").Append(EscapeJson(e.Part)).Append('"');
-            sb.Append('}');
-        }
+        sb.Append("{\"profile\":\"")
+            .Append(ValidationProfiles.ToCliName(report.Profile))
+            .Append("\",\"count\":").Append(report.ErrorCount)
+            .Append(",\"errorCount\":").Append(report.ErrorCount)
+            .Append(",\"warningCount\":").Append(report.WarningCount)
+            .Append(",\"errors\":[");
+        AppendValidationDiagnostics(sb, errors);
+        sb.Append("],\"warnings\":[");
+        AppendValidationDiagnostics(sb, warnings);
+        sb.Append("],\"diagnostics\":[");
+        AppendValidationDiagnostics(sb, report.Diagnostics);
         sb.Append("]}");
         return sb.ToString();
+    }
+
+    private static void AppendValidationDiagnostics(
+        StringBuilder sb,
+        IReadOnlyList<ValidationDiagnostic> diagnostics)
+    {
+        for (int i = 0; i < diagnostics.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var diagnostic = diagnostics[i];
+            sb.Append("{\"type\":\"").Append(EscapeJson(diagnostic.Type)).Append('"');
+            sb.Append(",\"description\":\"").Append(EscapeJson(diagnostic.Description)).Append('"');
+            if (diagnostic.Path != null)
+                sb.Append(",\"path\":\"").Append(EscapeJson(diagnostic.Path)).Append('"');
+            if (diagnostic.Part != null)
+                sb.Append(",\"part\":\"").Append(EscapeJson(diagnostic.Part)).Append('"');
+            sb.Append(",\"severity\":\"").Append(diagnostic.Severity).Append('"');
+            sb.Append(",\"classification\":\"").Append(diagnostic.Classification).Append('"');
+            sb.Append(",\"reason\":\"").Append(EscapeJson(diagnostic.Reason)).Append('"');
+            sb.Append('}');
+        }
     }
 
     private static string EscapeJson(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");

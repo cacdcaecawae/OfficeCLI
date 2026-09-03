@@ -55,7 +55,7 @@ internal record FormulaResult
         if (IsRange) return FirstCell()?.AsNumber() ?? 0;
         if (NumericValue.HasValue) return NumericValue.Value;
         if (BoolValue.HasValue) return BoolValue.Value ? 1 : 0;
-        if (IsString && double.TryParse(StringValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
+        if (IsString && NumericText.TryParse(StringValue, out var s)) return s;
         return 0;
     }
     public string AsString() => IsRange ? (FirstCell()?.AsString() ?? "") :
@@ -873,7 +873,7 @@ internal partial class FormulaEvaluator
         if (r.IsBlank) { val = 0; return true; }
         if (r.IsString)
         {
-            if (double.TryParse(r.StringValue, NumberStyles.Any, CultureInfo.InvariantCulture, out val))
+            if (NumericText.TryParse(r.StringValue, out val))
                 return true;
             // Excel coerces date/time-formatted text to its serial in arithmetic
             // (e.g. "2024-08-01" - "2024-08-01" = 0), so fall back to date parsing
@@ -887,7 +887,10 @@ internal partial class FormulaEvaluator
             if (Regex.IsMatch(s, @"^\d{1,2}:\d{2}(:\d{2})?$")
                 && TimeSpan.TryParse(s, CultureInfo.InvariantCulture, out var ts))
             { val = ts.TotalDays; return true; }
-            if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+            // "1,5" is a decimal comma, not January 5 — DateTime.TryParse
+            // would hand back that date's serial and multiply it.
+            if (!NumericText.IsDecimalCommaSpelling(s)
+                && DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
             { val = dt.ToOADate(); return true; }
             return false;
         }
@@ -937,7 +940,7 @@ internal partial class FormulaEvaluator
         if (s.Equals("TRUE", StringComparison.OrdinalIgnoreCase)) return FormulaResult.Bool(true);
         if (s.Equals("FALSE", StringComparison.OrdinalIgnoreCase)) return FormulaResult.Bool(false);
         if (s.StartsWith('#') && s.EndsWith('!')) return FormulaResult.Error(s);
-        if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var n)) return FormulaResult.Number(n);
+        if (NumericText.TryParse(s, out var n)) return FormulaResult.Number(n);
         return FormulaResult.Str(s);
     }
 
@@ -989,7 +992,7 @@ internal partial class FormulaEvaluator
         var tok = t[p];
         switch (tok.Type)
         {
-            case TT.Number: p++; return double.TryParse(tok.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var n) ? FormulaResult.Number(n) : null;
+            case TT.Number: p++; return NumericText.TryParse(tok.Value, out var n) ? FormulaResult.Number(n) : null;
             case TT.String: p++; return FormulaResult.Str(tok.Value);
             case TT.Bool: p++; return FormulaResult.Bool(tok.Value == "TRUE");
             case TT.CellRef: p++; return ResolveCellResult(tok.Value);
@@ -1308,7 +1311,7 @@ internal partial class FormulaEvaluator
                 // #REF! instead of coercing the cached string to a number.
                 if (cell.DataType?.Value == CellValues.Error) return FormulaResult.Error(cached);
                 if (cell.DataType?.Value == CellValues.String || cell.DataType?.Value == CellValues.InlineString) return FormulaResult.Str(cached);
-                return double.TryParse(cached, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? FormulaResult.Number(v) : FormulaResult.Str(cached);
+                return NumericText.TryParse(cached, out var v) ? FormulaResult.Number(v) : FormulaResult.Str(cached);
             }
 
             return FormulaResult.Blank();

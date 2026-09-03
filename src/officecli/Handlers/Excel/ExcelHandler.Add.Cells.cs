@@ -599,7 +599,10 @@ public partial class ExcelHandler
                         ExcelDataFormatter.ToExcelSerial(inferredDate, IsWorkbookDate1904()).ToString(System.Globalization.CultureInfo.InvariantCulture));
                     cell.DataType = null;
                 }
-                else if (!double.TryParse(safeValue, out var dbl) || !double.IsFinite(dbl))
+                // HasValidThousandsGrouping: AllowThousands reads "1,5" as 15,
+                // silently 10x-ing a decimal-comma value (issue #352 follow-up).
+                else if (!HasValidThousandsGrouping(safeValue)
+                    || !double.TryParse(safeValue, out var dbl) || !double.IsFinite(dbl))
                     cell.DataType = new EnumValue<CellValues>(CellValues.String);
                 else
                     // R-fuzz2-1: TryParse accepts spellings Excel's <v> parser

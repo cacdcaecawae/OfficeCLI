@@ -300,7 +300,12 @@ public partial class ExcelHandler
                             // matching how "Infinity" already behaves.
                             // R-fuzz2-1: numeric text is stored in canonical form
                             // ("+5" / "1,234" parse fine but corrupt <v> verbatim).
-                            if (double.TryParse(cellValue, out var dbl) && double.IsFinite(dbl))
+                            // HasValidThousandsGrouping: AllowThousands reads
+                            // "1,5" as 15, so a decimal-comma value would be
+                            // silently 10x-ed here while the explicit
+                            // type=number path above rejects the same text.
+                            if (HasValidThousandsGrouping(cellValue)
+                                && double.TryParse(cellValue, out var dbl) && double.IsFinite(dbl))
                             {
                                 cell.CellValue = new CellValue(NormalizeNumericCellText(cellValue, dbl));
                                 cell.DataType = null;
