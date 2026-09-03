@@ -30,6 +30,8 @@ Exactly one of `--dry-run` and `--out` is required. `--preserve-unsupported` can
 - XML parts are discovered by OPC content type as well as the `.xml` extension; differently named header parts are not skipped. Equation producer matching is case-insensitive.
 - Existing OMML and unrelated OLE objects remain intact. Run formatting on adjacent text is retained. Shared VML shape definitions are retained for other previews.
 
+`Equation Native` must be a direct child stream of the CFB root storage. The reader follows the root's child/sibling tree, not the physical directory-entry order; a same-name stream under a nested storage cannot supply or override the root equation. CFB names use case-insensitive UTF-16 comparison. Missing root streams, duplicate root names, cycles and invalid references in that tree are rejected, including when `--preserve-unsupported` is set. See the [CFB storage hierarchy](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/bc33425a-fbb9-4f73-911f-2662c7a14060) and [directory name rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/d30e462c-5f8a-435b-9c4c-cc0b9ea89956).
+
 Word controls the native formula font, sizing, spacing and alignment. MathType-specific typography, nudges and custom layout are **not pixel-preserved**; a `math_layout_normalized` warning reports this. The supported mathematical structures, Unicode characters, bold/italic styles and RGB character colors are retained.
 
 The converter matches main-document and XML part names case-insensitively, as required by [OPC URI equivalence](https://learn.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/8.0/system-io-packaging-case-insensitive-uri). For example, a relationship to `/WORD/DOCUMENT.XML` can identify the ZIP entry `word/document.xml`. The actual entry is still checked for a Word document root and body; output preserves the original ZIP entry names. Case-only duplicate entries remain ambiguous and are rejected.
@@ -81,6 +83,8 @@ dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release -p:Version=1
 ```
 
 The suite checks operand ordering, OMML schema validity, corruption/unknown-feature rejection, CLI JSON and exits, mixed-content preservation, HTML formulas, and normalized OMML equality after changing adjacent text with `WordHandler` and saving. CI runs the tests on Windows, Linux and macOS and additionally tests the trimmed Windows x64 executable. No Release or npm publish is performed by this workflow.
+
+Root-storage regressions generate separate `x` and nested `y` streams, vary their physical directory order, and assert `x` in both dry-run JSON and exported OMML. Missing/ambiguous root streams and broken sibling trees must fail without output. The shared CFB reader also round-trips both equation and `Ole10Native` streams across mini-sector and regular-sector sizes. Run `dotnet test tests/OfficeCli.Tests/OfficeCli.Tests.csproj -c Release --filter 'FullyQualifiedName~MathTypeStorageTests|FullyQualifiedName~RootEquation'`.
 
 Conversion CI sets `OFFICECLI_SKIP_UPDATE=1` to isolate the executable under test from upstream background updates and checks that its SHA-256 is unchanged after the suite. This is test isolation, not evidence that a build implements fixed-version protection. For a standalone MathType branch without the fork's release/update-protection changes, use the same opt-out when running conversion tests locally.
 

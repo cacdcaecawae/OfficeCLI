@@ -257,6 +257,68 @@ public class MathTypeConversionTests
         Assert.Empty(new OpenXmlValidator(FileFormatVersions.Office2019).Validate(doc));
     }
 
+    [Fact]
+    public async Task CliRootEquationStreamDeterminesBothDryRunAndExportedMath()
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("nested-storage.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        ReplaceEquationPayload(source, NestedEquations());
+        byte[] original = File.ReadAllBytes(source);
+        using (var doc = WordprocessingDocument.Open(source, false))
+            Assert.Empty(new OpenXmlValidator().Validate(doc));
+        var inspect = await Cli("convert-equations", source, "--dry-run", "--json");
+        Assert.True(inspect.Exit == 0, inspect.Out + inspect.Error);
+        var result = JsonNode.Parse(inspect.Out)!;
+        Assert.True(result["success"]!.GetValue<bool>());
+        Assert.Equal("x", result["data"]!["results"]![0]!["text"]!.GetValue<string>());
+        Assert.Equal("x", XElement.Parse(result["data"]!["results"]![0]!["omml"]!.GetValue<string>()).Value);
+        Assert.Single(Directory.GetFiles(dir.Path));
+
+        var export = await Cli("convert-equations", source, "--out", output, "--json");
+        Assert.True(export.Exit == 0, export.Out + export.Error);
+        Assert.True(JsonNode.Parse(export.Out)!["data"]!["fullyNative"]!.GetValue<bool>());
+        Assert.Equal("x", Assert.Single(Xml(output).Descendants(M + "oMath")).Value);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        var before = Entries(source);
+        var after = Entries(output);
+        foreach (string part in before.Keys.Where(p => p != "word/document.xml"))
+            Assert.Equal(before[part], after[part]);
+        var validation = await Cli("validate", output, "--json");
+        Assert.True(validation.Exit == 0, validation.Out + validation.Error);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("duplicate")]
+    [InlineData("cycle")]
+    public async Task CliInvalidRootEquationStorageFailsEvenWithPreservation(string invalid)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("invalid-storage.docx"), output = dir.File("native.docx");
+        CreateDocument(source);
+        var payload = NestedEquations(rootName: invalid == "missing" ? "RootData" : "Equation Native");
+        if (invalid == "duplicate") MathTypeStorageTests.SetPointer(payload, 1, 72, 2);
+        if (invalid == "cycle") MathTypeStorageTests.SetPointer(payload, 3, 72, 3);
+        ReplaceEquationPayload(source, payload);
+        byte[] original = File.ReadAllBytes(source);
+        foreach (bool preserve in new[] { false, true })
+        foreach (bool dryRun in new[] { false, true })
+        {
+            string[] destination = dryRun ? ["--dry-run"] : ["--out", output];
+            string[] preservation = preserve ? ["--preserve-unsupported"] : [];
+            var run = await Cli(["convert-equations", source, .. destination, .. preservation, "--json"]);
+            Assert.True(run.Exit == 1, run.Out + run.Error);
+            var report = JsonNode.Parse(run.Out)!;
+            Assert.False(report["success"]!.GetValue<bool>());
+            Assert.Equal(1, report["data"]!["invalid"]!.GetValue<int>());
+            Assert.Equal(0, report["data"]!["unsupported"]!.GetValue<int>());
+            Assert.Equal("invalid_equation_ole", Assert.Single(report["errors"]!.AsArray())!["code"]!.GetValue<string>());
+            Assert.False(File.Exists(output));
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+    }
+
     [Theory]
     [InlineData("floating", "unsupported_floating_equation")]
     [InlineData("textbox", "unsupported_equation_container")]
@@ -499,6 +561,13 @@ public class MathTypeConversionTests
             Assert.Equal(1, result.Exit);
             Assert.Equal("invalid_argument", JsonNode.Parse(result.Out)!["error"]!["code"]!.GetValue<string>());
         }
+    }
+
+    private static void ReplaceEquationPayload(string path, byte[] payload)
+    {
+        using var doc = WordprocessingDocument.Open(path, true);
+        using var data = new MemoryStream(payload);
+        doc.MainDocumentPart!.EmbeddedObjectParts.Single().FeedData(data);
     }
 
     private static string ChangeMainPartCasing(string path, string extension, bool uppercaseEntry)

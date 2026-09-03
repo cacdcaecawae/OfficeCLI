@@ -33,14 +33,54 @@ internal static class MathTypeTestData
         Line(Template(16, 0x70, Line(Text("p+q")), Line(Text("b=3")), Line(Text("B")), Character('∑'))),
         Line(Text("a=2")), Line(Text("A")), Character('∑'));
 
-    internal static byte[] Ole(byte[] mtef)
+    internal static byte[] Ole(byte[] mtef) => CompoundFile.WriteSingleStream("Equation Native", Native(mtef));
+
+    private static byte[] Native(byte[] mtef)
     {
         var native = new byte[28 + mtef.Length];
         BinaryPrimitives.WriteUInt16LittleEndian(native, 28);
         BinaryPrimitives.WriteUInt32LittleEndian(native.AsSpan(2), 0x00020000);
         BinaryPrimitives.WriteUInt32LittleEndian(native.AsSpan(8), (uint)mtef.Length);
         mtef.CopyTo(native, 28);
-        return CompoundFile.WriteSingleStream("Equation Native", native);
+        return native;
+    }
+
+    internal static byte[] NestedEquations(bool rootFirst = false, string rootName = "Equation Native")
+    {
+        byte[] root = Native(Equation(Character('x'))), nested = Native(Equation(Character('y')));
+        var cfb = CompoundFile.WriteSingleStream(rootName, root);
+        int directory = 512 * (1 + (int)BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(48)));
+        int miniFat = 512 * (1 + (int)BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(60)));
+        int miniStream = 512 * (1 + (int)BinaryPrimitives.ReadUInt32LittleEndian(cfb.AsSpan(directory + 116)));
+        if (root.Length > 64 || nested.Length > 64) throw new InvalidOperationException("Fixture streams must fit one mini sector each.");
+        nested.CopyTo(cfb, miniStream);
+        root.CopyTo(cfb, miniStream + 64);
+        BinaryPrimitives.WriteUInt32LittleEndian(cfb.AsSpan(miniFat), 0xfffffffe);
+        BinaryPrimitives.WriteUInt32LittleEndian(cfb.AsSpan(miniFat + 4), 0xfffffffe);
+        uint rootId = rootFirst ? 2u : 3u, nestedId = rootFirst ? 3u : 2u;
+        BinaryPrimitives.WriteUInt32LittleEndian(cfb.AsSpan(directory + 76), rootId);
+        BinaryPrimitives.WriteUInt64LittleEndian(cfb.AsSpan(directory + 120), 128);
+        // Root siblings are Cache and rootName; Cache owns a separate same-name stream.
+        Entry(1, "Cache", 1, uint.MaxValue, nestedId, 0, 0);
+        cfb[directory + 128 + 67] = 0;
+        Entry(rootId, rootName, 2, 1, uint.MaxValue, 1, root.Length);
+        Entry(nestedId, "Equation Native", 2, uint.MaxValue, uint.MaxValue, 0, nested.Length);
+        return cfb;
+
+        void Entry(uint id, string name, byte type, uint left, uint child, uint sector, int size)
+        {
+            var entry = cfb.AsSpan(directory + (int)id * 128, 128);
+            entry.Clear();
+            Encoding.Unicode.GetBytes(name).CopyTo(entry);
+            BinaryPrimitives.WriteUInt16LittleEndian(entry[64..], (ushort)(name.Length * 2 + 2));
+            entry[66] = type;
+            entry[67] = 1;
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[68..], left);
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[72..], uint.MaxValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[76..], child);
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[116..], sector);
+            BinaryPrimitives.WriteUInt64LittleEndian(entry[120..], (ulong)size);
+        }
     }
 
     internal static EmbeddedObject AddObject(OpenXmlPart part, byte[] data, string progId, int index)
