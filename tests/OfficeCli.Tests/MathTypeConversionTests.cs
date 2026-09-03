@@ -43,6 +43,51 @@ public class MathTypeConversionTests
     }
 
     [Fact]
+    public void XmlContentTypeFindsEquationsWithoutAnXmlFileExtension()
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("source.docx"), output = dir.File("native.docx");
+        CreateDocument(source, suite: true);
+        using (var package = System.IO.Packaging.Package.Open(source, FileMode.Open, FileAccess.ReadWrite))
+        {
+            var oldUri = new Uri("/word/header1.xml", UriKind.Relative);
+            var newUri = new Uri("/word/header.native", UriKind.Relative);
+            var old = package.GetPart(oldUri);
+            var renamed = package.CreatePart(newUri, old.ContentType);
+            using (var input = old.GetStream(FileMode.Open, FileAccess.Read))
+            using (var target = renamed.GetStream(FileMode.Create, FileAccess.Write)) input.CopyTo(target);
+            foreach (var relationship in old.GetRelationships())
+                renamed.CreateRelationship(relationship.TargetUri, relationship.TargetMode, relationship.RelationshipType, relationship.Id);
+            var main = package.GetPart(new Uri("/word/document.xml", UriKind.Relative));
+            var headerRef = Assert.Single(main.GetRelationships(), r => r.RelationshipType.EndsWith("/header", StringComparison.Ordinal));
+            main.DeleteRelationship(headerRef.Id);
+            main.CreateRelationship(new Uri("header.native", UriKind.Relative), headerRef.TargetMode, headerRef.RelationshipType, headerRef.Id);
+            package.DeletePart(oldUri);
+        }
+        var report = MathTypeConverter.Convert(source, output);
+        Assert.True(report["success"]!.GetValue<bool>());
+        Assert.Equal(6, report["data"]!["converted"]!.GetValue<int>());
+        Assert.Equal("h", Assert.Single(Xml(output, "word/header.native").Descendants(M + "oMath")).Value);
+        using var doc = WordprocessingDocument.Open(output, false);
+        Assert.Empty(new OpenXmlValidator().Validate(doc));
+    }
+
+    [Theory]
+    [InlineData("equation.dsmt4", true)]
+    [InlineData("equation.axmath", false)]
+    public void ProducerCasingCannotHideAnEmbeddedEquation(string producer, bool supported)
+    {
+        using var dir = new MathTypeTestDirectory();
+        string source = dir.File("source.docx");
+        CreateDocument(source, progId: producer);
+        var report = MathTypeConverter.Convert(source, null);
+        Assert.Equal(1, report["data"]!["equations"]!.GetValue<int>());
+        Assert.Equal(supported, report["success"]!.GetValue<bool>());
+        Assert.Equal(supported ? 0 : 1, report["data"]!["unsupported"]!.GetValue<int>());
+        Assert.False(report["data"]!["fullyNative"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public void ExportPreservesMixedTextTablesStoriesAndUntouchedPackageBytes()
     {
         using var dir = new MathTypeTestDirectory();

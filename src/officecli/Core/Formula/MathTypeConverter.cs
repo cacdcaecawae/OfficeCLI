@@ -53,6 +53,11 @@ internal static class MathTypeConverter
         string mainPart = CheckRelationships(package);
         if (archive.GetEntry(mainPart) == null)
             throw new CliException("The main document part is missing from the archive.") { Code = "corrupt_file" };
+        var xmlPartNames = package.GetParts()
+            .Where(p => p.ContentType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
+                || p.ContentType.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
+                || p.ContentType.Equals("text/xml", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Uri.OriginalString.TrimStart('/')).ToHashSet(StringComparer.Ordinal);
 
         var records = new JsonArray();
         var warnings = new JsonArray();
@@ -60,7 +65,7 @@ internal static class MathTypeConverter
         var xmlParts = new Dictionary<string, XDocument>(StringComparer.Ordinal);
         var conversions = new Dictionary<XElement, MathTypeEquation>();
         int existingNative = 0, otherObjects = 0, unsupported = 0, invalid = 0;
-        foreach (var entry in archive.Entries.Where(e => e.FullName == mainPart || e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)))
+        foreach (var entry in archive.Entries.Where(e => xmlPartNames.Contains(e.FullName) || e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)))
         {
             var xml = ReadXml(entry);
             if (entry.FullName == mainPart && (xml.Root?.Name != W + "document" || xml.Root.Elements(W + "body").Count() != 1))
@@ -72,7 +77,7 @@ internal static class MathTypeConverter
             {
                 index++;
                 string progId = (string?)ole.Attribute("ProgID") ?? "";
-                if (!progId.StartsWith("Equation.", StringComparison.Ordinal)) { otherObjects++; continue; }
+                if (!progId.StartsWith("Equation.", StringComparison.OrdinalIgnoreCase)) { otherObjects++; continue; }
                 string? relationshipId = (string?)ole.Attribute(R + "id");
                 var record = new JsonObject
                 {
@@ -82,7 +87,8 @@ internal static class MathTypeConverter
                 records.Add((JsonNode)record);
                 try
                 {
-                    if (progId is not ("Equation.DSMT4" or "Equation.3"))
+                    if (!progId.Equals("Equation.DSMT4", StringComparison.OrdinalIgnoreCase)
+                        && !progId.Equals("Equation.3", StringComparison.OrdinalIgnoreCase))
                         throw new MathTypeException("unsupported_equation_producer", $"Producer {progId} is not supported.");
                     var obj = ole.Parent;
                     if (obj?.Name != W + "object" || obj.Parent?.Name != W + "r" || obj.Parent.Parent?.Name != W + "p"

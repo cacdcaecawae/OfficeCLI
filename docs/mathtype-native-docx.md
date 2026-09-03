@@ -27,6 +27,7 @@ Exactly one of `--dry-run` and `--out` is required. `--preserve-unsupported` can
 - Transitional, non-macro DOCX packages; embedded `Equation.DSMT4` / `Equation.3` objects with a valid `Equation Native` stream containing **MTEF v5**.
 - Unicode variables/operators, verified MathType virtual spaces, fractions, roots, postfix/prefix scripts, common delimiters, large operators with limits, limits, braces, matrices without partition rules, multiline piles and common accents/primes.
 - Equations in paragraph runs, including mixed text, tables, headers, footers and footnotes. A display equation becomes `m:oMathPara` only when it is the paragraph's sole content; otherwise it stays an inline `m:oMath` without moving surrounding content.
+- XML parts are discovered by OPC content type as well as the `.xml` extension; differently named header parts are not skipped. Equation producer matching is case-insensitive.
 - Existing OMML and unrelated OLE objects remain intact. Run formatting on adjacent text is retained. Shared VML shape definitions are retained for other previews.
 
 Word controls the native formula font, sizing, spacing and alignment. MathType-specific typography, nudges and custom layout are **not pixel-preserved**; a `math_layout_normalized` warning reports this. The supported mathematical structures, Unicode characters, bold/italic styles and RGB character colors are retained.
